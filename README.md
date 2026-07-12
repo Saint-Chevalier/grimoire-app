@@ -39,25 +39,43 @@ That single law makes alignment, memory, and progress *auditable*.
 
 ## Quick start
 
-```bash
-# Node
-npx --yes serve .
+**This is a static ESM web app.**  
+There is **no** `package.json`, **no** `npm install`, **no** `requirements.txt`, and **no** API keys.
 
-# or Python
+### Prerequisites (pick one)
+- **Python 3.x**, or  
+- **Node.js** (only needed if you use `npx serve`)  
+- Browser: Chrome / Edge recommended (optional local vault folder picker)
+
+### Run cold (clone → serve → open)
+
+```bash
+git clone https://github.com/Saint-Chevalier/grimoire-app.git
+cd grimoire-app
+
+# Option A — Python (proven smoke path)
 python -m http.server 5173
+
+# Option B — Node (no install, no package.json)
+npx --yes serve .
 ```
 
-Open the printed URL (Chrome / Edge recommended for the optional local vault picker).
+Open the printed URL (e.g. `http://localhost:5173`).
 
-**Flow**
+**Do not** run `npm install` or `pip install` — there are no project dependencies. Those commands **false-fail** a healthy cold run.
 
-1. **New Focus** — name + type (AI / Person / Network) + sealed channel  
-2. Talk *to Grimoire about that focus* (paste replies, dump intel)  
-3. Click **Cast Spell** → consolidates intel → READY stack in the Spells panel  
-4. **Copy** → send on Hermes / Discord / email / wherever  
-5. **Mark Sent** → paste the reply back in → the universe densens  
+### Demo flow (10–15s proof)
 
-Optional: ★ HUD opens **Intel Atlas** (modal). Close with **×**. It never auto-sends.
+1. Open a seeded Focus (or **New Focus**)  
+2. Speak / paste intel about **that** Focus only  
+3. **Cast Spell** → card lands in Spells panel  
+4. **Copy** → send outside Grimoire (you are the message bus)  
+5. **Mark Sent** → paste the reply back → stars densen  
+
+Optional: click **★ HUD** for **Intel Atlas** (read-only). Close with **×**. Never auto-sends.
+
+Optional GIF: record load → open Focus → Cast Spell.  
+`docs/demo.gif` placeholder — not required for cold run.
 
 ---
 
@@ -68,15 +86,18 @@ index.html          shell
 css/styles.css      dark constellation UI
 js/app.js           core loop, cast, atlas, pulse
 js/data.js          spell forge, alignment parse, seeds
+js/health.js        Healer health covenant (HP per Focus)
 js/universe.js      canvas cosmos engine
 js/intelligence.js  optional local folder vault
 js/stars.js         metrics helpers
 conversations/      seed focuses (scaffold)
 spells/             seed spells (scaffold)
-docs/               public status Notes
+docs/               public status + roadmap
 ```
 
 Runtime state: **localStorage**. Optional disk vault folder is created only when **you** pick a parent directory in-browser.
+
+**Secrets / OPSEC:** `.env`, vault folders, and keys are gitignored. This app does not need cloud credentials to run.
 
 ---
 

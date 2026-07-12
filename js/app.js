@@ -522,8 +522,10 @@ function renderChat() {
   }
   setChatControlsEnabled(true);
 
-  if (isAiNode(convo) && !convoHasAlignment(convo)) {
+  if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) {
     els.chatInput.placeholder = `Speak about ${convo.name} — or Cast Spell for Alignment Reveal…`;
+  } else if (isAiNode(convo)) {
+    els.chatInput.placeholder = `Speak about ${convo.name} — densen intel or Cast Spell…`;
   } else {
     els.chatInput.placeholder = `Speak to Grimoire about ${convo.name}…`;
   }
@@ -735,9 +737,11 @@ function renderSpells() {
 
   if (!list.length) {
     els.spellsList.innerHTML = `<div class="spells-empty">No spells yet.<br/>${
-      isAiNode(convo)
+      isAiNode(convo) && !convoAlignmentUnlocked(convo)
         ? "Cast Spell for <strong>Alignment Reveal</strong>, or state intent in chat."
-        : "Talk to Grimoire — clear intent auto-casts a spell."
+        : isAiNode(convo)
+          ? "State intent in chat or hit <strong>Cast Spell</strong> to forge a directive."
+          : "Talk to Grimoire — clear intent auto-casts a spell."
     }</div>`;
     return;
   }
