@@ -1609,6 +1609,12 @@ export function isReceiptSpell(spell) {
     /CURRENT\s*STATE/.test(p) ||
     /^CONFIRMED\b/.test(p) ||
     /ACKNOWLEDGED/.test(p) ||
+    /LOOP\s*RECEIVED/.test(p) ||
+    /LOOP\s*DETECTED/.test(p) ||
+    /NO\s*DUPLICATE\s*CAST/.test(p) ||
+    /HOLDING\s*FORMATION/.test(p) ||
+    /FRAME\s*ALREADY\s*MAINTAINED/.test(p) ||
+    /RESPONSE\s*LOCKED/.test(p) ||
     /TRANSPARENCY\s*&\s*ALIGNMENT\s*REVEAL\s*[—-]\s*(RESPONSE|DELIVERED)/.test(p)
   );
 }

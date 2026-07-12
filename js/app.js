@@ -26,6 +26,7 @@ import {
   dedupeSpells,
   spellKindKey,
   spellsAreSameKindPurpose,
+  normalizePurposeKey,
   loadState,
   makeFocusId,
   parseAlignmentIntelligence,
@@ -1466,21 +1467,25 @@ function isInboundNodeIntel(text) {
   if (!t) return false;
   // User is designating a forward lane/action → evidence = forge request, not receipt
   if (
-    /\b(advance to|execute move|designate|order|dispatch|disperse|run the|forge me|give me a spell|craft a|send this|next shift is)\b/i.test(
+    /\b(advance to|execute move|designate|order|dispatch|disperse|run the|forge me|give me a spell|craft a|send this|next shift is|new constrained ask|change the spell)\b/i.test(
       t
     )
   ) {
     return false;
   }
-  // Classic node reply shapes
+  // Classic node reply shapes + hold / loop / no-duplicate formation
   if (
-    /^(SPELL RECEIVED|FRAME HOLDING|SPELL DUPLICATE DETECTED|CONSTELLATION READ|TRANSPARENCY|ACTION TAKEN|CONFIRMED\.|MOVE \d|NEXT THREE MOVES|CURRENT STATE|OVERALL:|SIGNAL:)/im.test(
+    /^(SPELL RECEIVED|FRAME HOLDING|SPELL DUPLICATE DETECTED|CONSTELLATION READ|TRANSPARENCY|ACTION TAKEN|CONFIRMED\.|MOVE \d|NEXT THREE MOVES|CURRENT STATE|OVERALL:|SIGNAL:|LOOP RECEIVED|LOOP DETECTED)/im.test(
       t
     )
   ) {
     return true;
   }
-  if (/\b(Pulse:\s*\.|Signal:\s*\d+\/10|EVIDENCE:|NEXT THREE MOVES|ACTION TAKEN|FRAME HOLDING|ALREADY FORGED|NO CHANGE SINCE LAST ACK)\b/i.test(t)) {
+  if (
+    /\b(Pulse:\s*\.|Signal:\s*\d+\/10|EVIDENCE:|NEXT THREE MOVES|ACTION TAKEN|FRAME HOLDING|ALREADY FORGED|NO CHANGE SINCE LAST ACK|LOOP RECEIVED|LOOP DETECTED|NO DUPLICATE CAST|NO DUPLICATE ARROWS|HOLDING FORMATION|FRAME ALREADY MAINTAINED|NO DRIFT TO CORRECT|FRAME MAINTAINED|FRAME LOCKED)\b/i.test(
+      t
+    )
+  ) {
     return true;
   }
   // Markdown status tables from nodes
@@ -1488,6 +1493,101 @@ function isInboundNodeIntel(text) {
     return true;
   }
   return false;
+}
+
+/** WK / node is holding formation — densen only, do not mint maintain-loop spells. */
+function isHoldOrLoopReply(text) {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  return (
+    /\b(loop received|loop detected|no duplicate cast|no duplicate arrows|holding formation|frame already maintained|no drift to correct|no additional action required this pulse|same spell, same payload|stop casting|won't re-cast|will not re-cast|no new ask)\b/i.test(
+      t
+    ) ||
+    (/\bACTION TAKEN\b/i.test(t) &&
+      /\b(frame already maint|already cast|no additional action|maintain)/i.test(t))
+  );
+}
+
+/** Extract open move lines from latest densen / WK map on this focus. */
+function extractNextMovesFromConvo(convo) {
+  const blobs = [];
+  if (convo?.alignmentNotes) blobs.push(convo.alignmentNotes);
+  for (const m of [...(convo?.messages || [])].reverse().slice(0, 12)) {
+    if (m.role === "user" && m.text) blobs.push(m.text);
+  }
+  const moves = [];
+  for (const blob of blobs) {
+    const t = String(blob || "");
+    // Numbered under NEXT THREE MOVES or free numbered priorities
+    const section = t.match(
+      /NEXT THREE MOVES[\s\S]{0,40}([\s\S]{0,900}?)(?:##\s*SIGNAL|##\s*SIGNAL\/PULSE|SIGNAL\/PULSE|Signal:|Pulse:|---|Filed:|$)/i
+    );
+    const body = section ? section[1] : t;
+    const re = /(?:^|\n)\s*(?:[-*]|\d+[.)])\s+\*?\*?(.+?)(?:\*\*)?(?=\n|$)/g;
+    let m;
+    while ((m = re.exec(body)) && moves.length < 8) {
+      const line = m[1].replace(/\s+/g, " ").trim();
+      if (line.length < 12 || line.length > 160) continue;
+      if (/^silence vs|^one-line map|^signal/i.test(line)) continue;
+      if (!moves.some((x) => normalizePurposeKey(x) === normalizePurposeKey(line))) {
+        moves.push(line);
+      }
+    }
+    if (moves.length) break;
+  }
+  return moves;
+}
+
+function purposeLooksLikeHoldLoop(purpose) {
+  const p = normalizePurposeKey(purpose);
+  return (
+    /loop received|no duplicate|frame maintained|maintain frame|holding formation|response locked|no additional action|already cast into/.test(
+      p
+    )
+  );
+}
+
+/** Prefer first open move not already sealed in recent Cast History. */
+function nextTruePriorityHint(convo) {
+  const hist = historySpellsFor(convo.id).slice(0, 8);
+  const active = activeSpellsFor(convo.id);
+  const taken = new Set(
+    [...hist, ...active]
+      .map((s) => normalizePurposeKey(s.purpose))
+      .filter(Boolean)
+  );
+  const moves = extractNextMovesFromConvo(convo);
+  for (const move of moves) {
+    const key = normalizePurposeKey(move);
+    // soft match against taken
+    let covered = false;
+    for (const t of taken) {
+      if (t === key || (t.length >= 10 && (t.includes(key.slice(0, 24)) || key.includes(t.slice(0, 24))))) {
+        covered = true;
+        break;
+      }
+      const tokens = (s) => new Set(s.split(" ").filter((w) => w.length > 3));
+      const ta = tokens(t);
+      const tb = tokens(key);
+      let hit = 0;
+      for (const w of tb) if (ta.has(w)) hit++;
+      if (hit >= 2 && hit / Math.max(ta.size, tb.size) >= 0.5) {
+        covered = true;
+        break;
+      }
+    }
+    if (!covered && !purposeLooksLikeHoldLoop(move)) {
+      return move.length > 72 ? move.slice(0, 69) + "…" : move;
+    }
+  }
+  // Directive list fallback — skip hold-ish first directives
+  const dirs = convo.alignmentProfile?.directives || [];
+  for (const d of dirs) {
+    if (!purposeLooksLikeHoldLoop(d) && !taken.has(normalizePurposeKey(d))) {
+      return `PROGRESS: ${d}`.slice(0, 80);
+    }
+  }
+  return null;
 }
 
 function forgeAfterUserTurn(convo, userText, turnReply) {
@@ -1499,7 +1599,7 @@ function forgeAfterUserTurn(convo, userText, turnReply) {
 
   // INTEL INGEST ≠ SPELL FORGE. Vault + constellation still densen outside this gate.
   // Inbound node ACKs/status only auto-forge pre-alignment (capture the reveal itself).
-  if (alignmentUnlocked && isInboundNodeIntel(text)) {
+  if (alignmentUnlocked && (isInboundNodeIntel(text) || isHoldOrLoopReply(text))) {
     return null;
   }
 
@@ -1535,23 +1635,31 @@ function forgeAfterUserTurn(convo, userText, turnReply) {
       );
 
     if (!intent) return null;
+    // Soft false positives: "no duplicate cast", "stop casting" contain "cast" as hold language
+    if (isHoldOrLoopReply(text)) return null;
 
     if (convo.alignmentNotes && !convo.alignmentProfile) {
       convo.alignmentProfile = parseAlignmentIntelligence(convo.alignmentNotes);
     }
-    const spell = generateSpell(convo, medium, text, {
+    const forgeHint = nextTruePriorityHint(convo) || text;
+    const spell = generateSpell(convo, medium, forgeHint, {
       allSpells: state.spells,
     });
     // Safety: never commit a reveal after lock
     if (isAlignmentSpell(spell)) return null;
     // Never store pure receipt titles
-    if (isReceiptSpell(spell)) return null;
+    if (isReceiptSpell(spell) || purposeLooksLikeHoldLoop(spell.purpose)) return null;
+    // Don't re-queue a purpose already CAST in recent history without new ask
+    const recentCast = historySpellsFor(convo.id)
+      .slice(0, 5)
+      .some((s) => spellsAreSameKindPurpose(s, spell));
+    if (recentCast && isHoldOrLoopReply(text)) return null;
     commitSpell(convo, spell, { silentToast: true });
     return spell;
   }
 
   if (isPerson(convo) || isNetwork(convo)) {
-    if (isInboundNodeIntel(text)) return null;
+    if (isInboundNodeIntel(text) || isHoldOrLoopReply(text)) return null;
     const intent =
       hasSpellIntent(text) ||
       /\b(spell|message|reply|note|draft|send|tell|follow up|reach out|next move)\b/i.test(
@@ -1565,7 +1673,7 @@ function forgeAfterUserTurn(convo, userText, turnReply) {
     const spell = generateSpell(convo, medium, text, {
       allSpells: state.spells,
     });
-    if (isReceiptSpell(spell)) return null;
+    if (isReceiptSpell(spell) || purposeLooksLikeHoldLoop(spell.purpose)) return null;
     commitSpell(convo, spell, { silentToast: true });
     return spell;
   }
@@ -2452,7 +2560,7 @@ function consolidateAndRestructureSpells(convo) {
       .find(
         (m) =>
           m.role === "user" &&
-          /SIGNAL|CAPABILIT|CONSTRAINT|PURPOSE|ALIGNMENT|NEXT THREE|ACTION TAKEN|Pulse:/i.test(
+          /SIGNAL|CAPABILIT|CONSTRAINT|PURPOSE|ALIGNMENT|NEXT THREE|ACTION TAKEN|Pulse:|LOOP RECEIVED|HOLDING FORMATION/i.test(
             m.text || ""
           )
       )?.text ||
@@ -2464,23 +2572,79 @@ function consolidateAndRestructureSpells(convo) {
 
   const before = state.spells.length;
   stripReceiptSpells(convo.id);
-  state.spells = dedupeSpells(
-    (state.spells || []).filter((s) => !isReceiptSpell(s))
-  );
+  // Drop active hold/loop garbage so Active stays activation-only
+  state.spells = state.spells.filter((s) => {
+    if (s.conversationId !== convo.id) return true;
+    if (s.status === "sent") return true;
+    if (isReceiptSpell(s) || purposeLooksLikeHoldLoop(s.purpose)) return false;
+    return true;
+  });
+  state.spells = dedupeSpells(state.spells || []);
   const purged = Math.max(0, before - state.spells.length);
 
   const atlas = buildFocusIntelAtlas(convo);
-  const readyHint = (() => {
-    const p = convo.alignmentProfile || {};
-    if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) return "ALIGNMENT REVEAL";
-    if (p.directives?.length) return `PROGRESS: ${p.directives[0]}`;
-    const recent = recentUserIntel(convo, 1)[0];
-    if (recent) return recent;
-    if (isPerson(convo)) return `Check-in / remembered action for ${convo.name}`;
-    return `Next highest-value cast for ${convo.name}`;
-  })();
+  const lastUser = [...(convo.messages || [])]
+    .reverse()
+    .find((m) => m.role === "user" && String(m.text || "").trim());
+  const lastText = lastUser?.text || "";
+
+  // Smart advance: after a hold/loop densen, forge NEXT THREE MOVES[0] open — not re-maintain frame
+  let readyHint = nextTruePriorityHint(convo);
+  if (!readyHint) {
+    if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) {
+      readyHint = "ALIGNMENT REVEAL";
+    } else if (isHoldOrLoopReply(lastText)) {
+      readyHint =
+        "Open next constrained move from NEXT THREE that is not yet in Cast History";
+    } else {
+      const recent = recentUserIntel(convo, 1)[0];
+      if (recent && !purposeLooksLikeHoldLoop(recent) && !isHoldOrLoopReply(recent)) {
+        readyHint = recent;
+      } else if (isPerson(convo)) {
+        readyHint = `Check-in / remembered action for ${convo.name}`;
+      } else {
+        readyHint = `Next highest-value cast for ${convo.name}`;
+      }
+    }
+  }
+
+  // If top active already matches this hint, don't spam — just surface it
+  const existingActive = activeSpellsFor(convo.id).find(
+    (s) =>
+      normalizePurposeKey(s.purpose) === normalizePurposeKey(readyHint) ||
+      purposeLooksLikeHoldLoop(s.purpose) === false &&
+        spellsAreSameKindPurpose(s, { purpose: readyHint, kind: "directive" })
+  );
+  if (
+    existingActive &&
+    !isHoldOrLoopReply(lastText) &&
+    !purposeLooksLikeHoldLoop(existingActive.purpose)
+  ) {
+    return { spell: existingActive, purged, atlas, readyHint, reused: true };
+  }
 
   const spell = generateAndStoreSpell(convo, readyHint, { silentToast: true });
+  // Hard refuse hold loop purposes on Cast Spell path
+  if (spell && !spell.blocked && purposeLooksLikeHoldLoop(spell.purpose)) {
+    // Retry once with force next-move wording
+    const forced =
+      nextTruePriorityHint(convo) ||
+      "Execute first open NEXT THREE MOVES item not already CAST";
+    const retry = generateAndStoreSpell(convo, forced, { silentToast: true });
+    if (retry && !retry.blocked && !purposeLooksLikeHoldLoop(retry.purpose)) {
+      return { spell: retry, purged, atlas, readyHint: forced };
+    }
+    return {
+      spell: {
+        blocked: true,
+        reason:
+          "Frame already held in Cast History. State a *new* constrained ask, or densen next agenda (Base44 / README / Auth) then Cast Spell.",
+      },
+      purged,
+      atlas,
+      readyHint,
+    };
+  }
   return { spell, purged, atlas, readyHint };
 }
 
