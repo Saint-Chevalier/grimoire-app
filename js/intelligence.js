@@ -9,11 +9,12 @@
  */
 
 import {
-  formatSpellMarkdown,
-  getSealedChannel,
   getFocusType,
+  getSealedChannel,
   isAlignmentSpell,
+  formatSpellMarkdown,
 } from "./data.js";
+import { computeFocusHealth } from "./health.js";
 
 const IDB_NAME = "grimoire-intel-v1";
 const IDB_STORE = "handles";
@@ -366,6 +367,24 @@ export function buildFocusMarkdown(focus, spells = []) {
     lines.push("_No alignment reveal on file yet._");
   }
   lines.push("");
+
+  // Healer Health Covenant snapshot (computed at write time)
+  try {
+    const health = computeFocusHealth(focus, spells);
+    lines.push("## Healer Health Covenant");
+    lines.push("");
+    lines.push(`**HP:** ${health.hp}/100 · **Band:** ${String(health.band || "").toUpperCase()}`);
+    lines.push(`**Recipe:** ${health.label} (\`${health.recipeId}\`)`);
+    lines.push("");
+    for (const c of health.conditions || []) {
+      lines.push(`- ${c.label}: ${c.score}/100 (w${c.weight})`);
+    }
+    lines.push("");
+    lines.push(`_${health.healerNote}_`);
+    lines.push("");
+  } catch {
+    /* health optional */
+  }
 
   lines.push("## Spells");
   if (!focusSpells.length) {

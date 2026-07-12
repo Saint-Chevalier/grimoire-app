@@ -141,6 +141,88 @@ button {
   background: rgba(20, 15, 40, 0.65);
 }
 
+/* Healer Health Covenant bars (Atlas) */
+.health-covenant {
+  margin: 0.35rem 0 0.6rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: 10px;
+  border: 1px solid rgba(167, 139, 250, 0.22);
+  background: rgba(8, 6, 18, 0.55);
+}
+.health-master {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  align-items: baseline;
+  margin-bottom: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+.health-hp {
+  font-weight: 600;
+  color: #e9e5ff;
+  letter-spacing: 0.04em;
+}
+.health-band {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+  color: rgba(196, 181, 253, 0.95);
+}
+.health-recipe {
+  opacity: 0.7;
+  font-size: 0.68rem;
+}
+.health-master-track,
+.health-track {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.health-master-track {
+  height: 10px;
+  margin-bottom: 0.55rem;
+}
+.health-master-fill,
+.health-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 220ms ease;
+}
+.health-fill.band-critical,
+.health-master-fill.band-critical { background: linear-gradient(90deg, #e11d48, #f43f5e); }
+.health-fill.band-wounded,
+.health-master-fill.band-wounded { background: linear-gradient(90deg, #ea580c, #fb923c); }
+.health-fill.band-stable,
+.health-master-fill.band-stable { background: linear-gradient(90deg, #ca8a04, #fbbf24); }
+.health-fill.band-vital,
+.health-master-fill.band-vital { background: linear-gradient(90deg, #059669, #34d399); }
+.health-fill.band-sovereign,
+.health-master-fill.band-sovereign { background: linear-gradient(90deg, #7c3aed, #a78bfa); }
+.health-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.6fr) 2rem;
+  gap: 0.35rem 0.5rem;
+  align-items: center;
+  margin: 0.22rem 0;
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  color: rgba(220, 215, 255, 0.88);
+}
+.health-label { opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.health-score { text-align: right; opacity: 0.75; }
+
+.universe-hud[data-health-band="critical"] {
+  border-color: rgba(244, 63, 94, 0.45);
+}
+.universe-hud[data-health-band="wounded"] {
+  border-color: rgba(251, 146, 60, 0.4);
+}
+.universe-hud[data-health-band="sovereign"] {
+  border-color: rgba(167, 139, 250, 0.5);
+}
+
 /* Intel Atlas modal */
 .atlas-overlay {
   position: fixed;

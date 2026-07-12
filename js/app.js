@@ -58,6 +58,11 @@ import {
   isIntelligenceSetupComplete,
   focusFileName,
 } from "./intelligence.js";
+import {
+  computeFocusHealth,
+  healthHudChip,
+  healerHealthSpellHint,
+} from "./health.js";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 
@@ -982,14 +987,23 @@ function updateUniverseHudChrome(snap) {
   const hud = getUniverseHud();
   const stageName = hud.stageName || snap?.stageName || "VOID";
   const starCount = hud.starCount || 0;
+  const convo = activeConvo();
+  const health = convo ? computeFocusHealth(convo, state.spells) : null;
   if (els.universeHudCount) els.universeHudCount.textContent = String(starCount);
-  if (els.universeHudStage) els.universeHudStage.textContent = stageName;
+  if (els.universeHudStage) {
+    const hpBit = health ? ` · ${healthHudChip(health)}` : "";
+    els.universeHudStage.textContent = `${stageName}${hpBit}`;
+  }
+  if (els.universeHud) {
+    els.universeHud.title = health
+      ? `${health.summary} — click for Intel Atlas / Healer health`
+      : "Intel Atlas";
+    els.universeHud.dataset.healthBand = health?.band || "";
+  }
   if (els.universeStage) {
-    const ch = snap?.focusId && activeConvo()
-      ? `${getSealedChannel(activeConvo())}`
-      : "";
+    const ch = snap?.focusId && convo ? `${getSealedChannel(convo)}` : "";
     els.universeStage.textContent = snap?.focusId
-      ? `${stageName}${ch ? "" : ""}`
+      ? `${stageName}${health ? ` · HP ${health.hp}` : ""}${ch ? "" : ""}`
       : "VOID";
   }
 }
@@ -2067,6 +2081,15 @@ function buildFocusIntelAtlas(convo, spells = state.spells) {
       ["Aligned", snap.aligned ? "YES" : "NO"],
     ],
   });
+
+  // Healer Health Covenant — multi-condition bar, per Focus type
+  const health = computeFocusHealth(convo, spells);
+  sections.push({
+    title: "Healer Health Covenant",
+    health,
+    lines: [health.healerNote, `Next restore spell: ${healerHealthSpellHint(health)}`],
+  });
+
   sections.push({ title: "Purpose", lines: [purpose] });
   if (listSlice(p.directives).length) {
     sections.push({ title: "Directives (planets)", lines: listSlice(p.directives, 8) });
@@ -2195,6 +2218,30 @@ function renderIntelAtlas(convo) {
   const html = atlas.sections
     .map((sec) => {
       let body = "";
+      if (sec.health) {
+        const h = sec.health;
+        const bars = (h.conditions || [])
+          .map((c) => {
+            const w = Math.max(0, Math.min(100, c.score));
+            return `<div class="health-row"><span class="health-label">${escapeHtml(
+              c.label
+            )}</span><div class="health-track"><div class="health-fill band-${escapeHtml(
+              h.band
+            )}" style="width:${w}%"></div></div><span class="health-score">${w}</span></div>`;
+          })
+          .join("");
+        body += `<div class="health-covenant" data-band="${escapeHtml(h.band)}">
+          <div class="health-master">
+            <span class="health-hp">HP ${h.hp}</span>
+            <span class="health-band">${escapeHtml(h.band.toUpperCase())}</span>
+            <span class="health-recipe">${escapeHtml(h.label)}</span>
+          </div>
+          <div class="health-master-track"><div class="health-master-fill band-${escapeHtml(
+            h.band
+          )}" style="width:${h.hp}%;background:${escapeHtml(h.color)}"></div></div>
+          ${bars}
+        </div>`;
+      }
       if (sec.kv && sec.kv.length) {
         body += `<dl class="atlas-kv">${sec.kv
           .map(

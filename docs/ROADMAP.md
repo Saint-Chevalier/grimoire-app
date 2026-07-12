@@ -9,6 +9,7 @@ Private operator doctrine is never required to run or contribute.
 - Local chat + paste intelligence
 - Spell panel: forge / copy / mark sent
 - Universe densening + optional Intel Atlas inspect
+- **Healer Health Covenant** — multi-condition HP bars per Focus type (AI / Person / Network)
 - MIT license, contributor ladder, local-first vault option
 
 ## Next — Chrono-Ring (read-only)
