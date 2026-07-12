@@ -492,13 +492,16 @@ export async function writeFocusIntelligence(focus, spells = [], opts = {}) {
   if (handle && fsAvailable) {
     try {
       const fileHandle = await handle.getFileHandle(name, { create: true });
+      const current = await readExistingFocusText(fileHandle).catch(() => null);
+      if (current === content) {
+        return { ok: true, method: "filesystem", fileName: name, skipped: true };
+      }
       const writable = await fileHandle.createWritable();
       await writable.write(content);
       await writable.close();
       return { ok: true, method: "filesystem", fileName: name };
     } catch (err) {
       console.warn("Intelligence write failed", err);
-      // Do NOT spam downloads if user has FS API but write failed
       return { ok: false, method: "error", fileName: name, error: String(err) };
     }
   }
@@ -508,8 +511,12 @@ export async function writeFocusIntelligence(focus, spells = [], opts = {}) {
     return { ok: true, method: "download", fileName: name };
   }
 
-  // FS available but no folder chosen — silent skip (UI should prompt)
   return { ok: false, method: "no-folder", fileName: name };
+}
+
+async function readExistingFocusText(fileHandle) {
+  const file = await fileHandle.getFile();
+  return file.text();
 }
 
 /**
