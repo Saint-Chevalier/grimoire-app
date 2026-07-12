@@ -64,6 +64,10 @@ Open the printed URL (e.g. `http://localhost:5173`).
 
 **Do not** run `npm install` or `pip install` — there are no project dependencies. Those commands **false-fail** a healthy cold run.
 
+### Public demo (GitHub Pages)
+When Pages is enabled: **https://saint-chevalier.github.io/grimoire-app/**  
+(Relative asset paths; pure static. Vault stays private — demo is browser-local only.)
+
 ### Demo flow (10–15s proof)
 
 1. Open a seeded Focus (or **New Focus**)  
