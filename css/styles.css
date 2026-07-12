@@ -1777,6 +1777,52 @@ button {
   font-size: 0.65rem;
 }
 
+/* Spell panel Active / Cast History tabs */
+.spell-view-tabs {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0 0.85rem 0.35rem;
+}
+
+.spell-view-tab {
+  flex: 1;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.38rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-dim);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.spell-view-tab:hover {
+  color: var(--text);
+  border-color: rgba(167, 139, 250, 0.35);
+}
+
+.spell-view-tab.active {
+  color: #e9e0ff;
+  background: rgba(167, 139, 250, 0.18);
+  border-color: rgba(167, 139, 250, 0.5);
+}
+
+.spell-timestamps {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  line-height: 1.35;
+  margin: 0.15rem 0 0.35rem;
+  opacity: 0.9;
+}
+
+.spell-item.spell-history {
+  opacity: 0.92;
+  border-color: rgba(52, 211, 153, 0.18);
+}
+
 /* Send icon button */
 .btn-send {
   display: inline-flex;

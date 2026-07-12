@@ -116,11 +116,15 @@
       <header class="spells-header">
         <h3>Spells</h3>
         <div class="spells-header-actions">
-          <button type="button" class="btn-clear-all" id="btn-clear-all" title="Clear all spells for this focus">Clear All</button>
+          <button type="button" class="btn-clear-all" id="btn-clear-all" title="Clear all active spells for this focus">Clear Active</button>
           <button type="button" class="btn-icon subtle" id="btn-close-spells" title="Collapse panel" aria-label="Collapse Spells panel">›</button>
         </div>
       </header>
-      <p class="spells-hint">Pending & ready spells for this focus. Copy → send outside Grimoire → mark Sent.</p>
+      <div class="spell-view-tabs" role="tablist" aria-label="Spell views">
+        <button type="button" class="spell-view-tab active" id="tab-spells-active" data-view="active" role="tab" aria-selected="true">Active</button>
+        <button type="button" class="spell-view-tab" id="tab-spells-history" data-view="history" role="tab" aria-selected="false">Cast History</button>
+      </div>
+      <p class="spells-hint" id="spells-hint">Copy closes the cast (sent + time-stamped). Paste the node reply, densen, Cast Spell for the next true priority.</p>
       <div class="spells-list" id="spells-list"></div>
     </aside>
   </div>
@@ -186,6 +190,7 @@
       </div>
       <footer class="atlas-foot">
         <span class="atlas-economy">☉ align · ★ intel · ♃ directives · ☄ spells · ✦ sent</span>
+        <button type="button" class="btn-export-focus" id="btn-export-focus" title="Copy Focus dossier">Copy Focus</button>
       </footer>
     </div>
   </div>

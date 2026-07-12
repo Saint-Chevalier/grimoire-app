@@ -1353,6 +1353,9 @@ export function loadState() {
         if (typeof parsed.spellsOpen !== "boolean") {
           parsed.spellsOpen = true;
         }
+        if (parsed.spellView !== "history") {
+          parsed.spellView = "active";
+        }
         // Drop layout-regression flag if present
         delete parsed.sidebarCollapsed;
         return parsed;
@@ -1366,6 +1369,7 @@ export function loadState() {
     spells: structuredClone(SEED_SPELLS),
     activeId: "wizard-king-hermes",
     spellsOpen: true,
+    spellView: "active",
   };
 }
 
@@ -1618,6 +1622,7 @@ export function saveState(state) {
         spells: state.spells,
         activeId: state.activeId,
         spellsOpen: state.spellsOpen,
+        spellView: state.spellView === "history" ? "history" : "active",
       })
     );
   } catch {

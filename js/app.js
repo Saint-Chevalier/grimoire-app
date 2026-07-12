@@ -99,6 +99,9 @@ const els = {
   btnClearAll: $("#btn-clear-all"),
   spellCount: $("#spell-count") || document.getElementById("spell-count"),
   spellsList: $("#spells-list"),
+  spellsHint: $("#spells-hint"),
+  tabSpellsActive: $("#tab-spells-active"),
+  tabSpellsHistory: $("#tab-spells-history"),
   constellationPing: $("#constellation-ping"),
   app: $(".app") || document.querySelector(".app"),
   stars: $("#stars"),
@@ -202,8 +205,69 @@ function spellsFor(convoId) {
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/** Active queue only — never cast / history entries. */
+function activeSpellsFor(convoId) {
+  return spellsFor(convoId)
+    .filter((s) => s.status !== "sent")
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+/** Cast History — sealed casts, newest answer first. */
+function historySpellsFor(convoId) {
+  return spellsFor(convoId)
+    .filter((s) => s.status === "sent")
+    .sort((a, b) => (b.sentAt || b.createdAt || 0) - (a.sentAt || a.createdAt || 0));
+}
+
 function pendingCount(convoId) {
-  return spellsFor(convoId).filter((s) => s.status !== "sent").length;
+  return activeSpellsFor(convoId).length;
+}
+
+/** Short human time for spell lifecycle chips. */
+function formatSpellTime(ts) {
+  if (!ts) return "";
+  try {
+    return new Date(ts).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function setSpellView(view) {
+  state.spellView = view === "history" ? "history" : "active";
+  persist();
+  renderSpells();
+}
+
+function ensureSpellView() {
+  if (state.spellView !== "history") state.spellView = "active";
+  return state.spellView;
+}
+
+/**
+ * When the Operator pastes a real reply / densen block, stamp the most recent
+ * unanswered CAST spell with answeredAt. Time becomes truth for Cast History.
+ */
+function stampSpellAnsweredFromIngest(convo, userText) {
+  if (!convo || !userText) return;
+  const t = String(userText).trim();
+  if (t.length < 40 && t !== ".") return;
+  // Avoid stamping pure outbound intents as answers
+  const outboundish =
+    /^(do|please|ask|tell|send|open|cast|implement|build|run|make|draft)\b/i.test(t) &&
+    t.length < 160 &&
+    !/\bACTION TAKEN\b|\bEVIDENCE\b|\bNEXT THREE\b|\bSignal:\s*\d/i.test(t);
+  if (outboundish) return;
+
+  const newest = historySpellsFor(convo.id).find((s) => !s.answeredAt);
+  if (!newest) return;
+  newest.answeredAt = Date.now();
+  newest.answerExcerpt = t.replace(/\s+/g, " ").trim().slice(0, 280);
 }
 
 function persist() {
@@ -711,37 +775,67 @@ function renderSpells() {
   const convo = activeConvo();
   // Self-heal: drop junk receipt/echo cards so the panel stays cast-ready
   if (convo) stripReceiptSpells(convo.id);
-  const list = convo ? spellsFor(convo.id) : [];
-  const pending = convo ? pendingCount(convo.id) : 0;
-  const total = list.length;
 
-  // Sidebar / header spell count for active Focus
-  const countEl =
-    els.spellCount || document.getElementById("spell-count");
+  const view = ensureSpellView();
+  const readyList = convo ? activeSpellsFor(convo.id) : [];
+  const histList = convo ? historySpellsFor(convo.id) : [];
+  const list = view === "history" ? histList : readyList;
+  const pending = readyList.length;
+  const total = convo ? spellsFor(convo.id).length : 0;
+
+  // Sidebar / header spell count for active Focus (active only)
+  const countEl = els.spellCount || document.getElementById("spell-count");
   if (countEl) {
-    const n = pending > 0 ? pending : total;
+    const n = pending > 0 ? pending : 0;
     countEl.textContent = n > 0 ? String(n) : "";
     countEl.dataset.count = String(n);
   }
 
-  // Reset clear-all confirm UI on re-render (unless mid-confirm — clear that timer)
-  resetClearAllButton();
+  // Tabs
+  els.tabSpellsActive?.classList.toggle("active", view === "active");
+  els.tabSpellsHistory?.classList.toggle("active", view === "history");
+  if (els.tabSpellsActive) {
+    els.tabSpellsActive.setAttribute("aria-selected", view === "active" ? "true" : "false");
+  }
+  if (els.tabSpellsHistory) {
+    els.tabSpellsHistory.setAttribute("aria-selected", view === "history" ? "true" : "false");
+    els.tabSpellsHistory.textContent = histList.length
+      ? `Cast History (${histList.length})`
+      : "Cast History";
+  }
+  if (els.spellsHint) {
+    els.spellsHint.textContent =
+      view === "history"
+        ? "Cast History is sealed truth — forged, cast, and answered times. Double-tap ✕ only to prune sludge."
+        : "Copy seals the cast (sent + timestamp). Paste the reply into chat to densen, then Cast Spell for the next true priority.";
+  }
+
+  if (els.btnClearAll) {
+    els.btnClearAll.disabled = !convo || view === "history" || readyList.length === 0;
+    els.btnClearAll.textContent = view === "history" ? "—" : "Clear Active";
+    els.btnClearAll.title =
+      view === "history"
+        ? "History is sealed — clear only per-card with ✕"
+        : "Clear all active spells for this focus (history kept)";
+  }
+
+  // Reset clear-all confirm UI on re-render
+  if (typeof resetClearAllButton === "function") resetClearAllButton();
 
   if (!convo) {
     els.spellsList.innerHTML = `<div class="spells-empty">Select a focus to see its spells.</div>`;
-    if (els.btnClearAll) els.btnClearAll.disabled = true;
     return;
   }
 
-  if (els.btnClearAll) els.btnClearAll.disabled = list.length === 0;
-
   if (!list.length) {
-    els.spellsList.innerHTML = `<div class="spells-empty">No spells yet.<br/>${
-      isAiNode(convo) && !convoAlignmentUnlocked(convo)
-        ? "Cast Spell for <strong>Alignment Reveal</strong>, or state intent in chat."
-        : isAiNode(convo)
-          ? "State intent in chat or hit <strong>Cast Spell</strong> to forge a directive."
-          : "Talk to Grimoire — clear intent auto-casts a spell."
+    els.spellsList.innerHTML = `<div class="spells-empty">${
+      view === "history"
+        ? "No cast history yet.<br/>Copy a READY spell — it drops here with timestamps."
+        : isAiNode(convo) && !convoAlignmentUnlocked(convo)
+          ? "Cast Spell for <strong>Alignment Reveal</strong>, or state intent in chat."
+          : isAiNode(convo)
+            ? "State intent in chat or hit <strong>Cast Spell</strong> to forge a directive."
+            : "Talk to Grimoire — clear intent auto-casts a spell."
     }</div>`;
     return;
   }
@@ -749,44 +843,56 @@ function renderSpells() {
   els.spellsList.innerHTML = "";
   list.forEach((spell) => {
     const item = document.createElement("article");
-    item.className = "spell-item";
+    item.className = "spell-item" + (spell.status === "sent" ? " spell-history" : "");
     item.dataset.spellId = spell.id;
     const md = formatSpellMarkdown(spell);
-    const badgeClass = spell.rebuilt
-      ? "status-badge rebuilt"
-      : `status-badge ${spell.status || "ready"}`;
-    const badgeText = spell.rebuilt
-      ? "REBUILT"
-      : escapeHtml(spell.status || "ready");
+    const isSent = spell.status === "sent";
+    const badgeClass = isSent
+      ? "status-badge sent"
+      : spell.rebuilt
+        ? "status-badge rebuilt"
+        : `status-badge ${spell.status || "ready"}`;
+    const badgeText = isSent
+      ? "CAST"
+      : spell.rebuilt
+        ? "REFILLED"
+        : escapeHtml(spell.status || "ready");
+    const timeBits = [];
+    if (spell.createdAt) timeBits.push(`forged ${formatSpellTime(spell.createdAt)}`);
+    if (spell.rebuiltAt && !isSent) timeBits.push(`refilled ${formatSpellTime(spell.rebuiltAt)}`);
+    if (spell.copiedAt) timeBits.push(`copied ${formatSpellTime(spell.copiedAt)}`);
+    if (spell.sentAt) timeBits.push(`cast ${formatSpellTime(spell.sentAt)}`);
+    if (spell.answeredAt) timeBits.push(`answered ${formatSpellTime(spell.answeredAt)}`);
+    const timeLine = timeBits.length
+      ? `<div class="spell-timestamps">${escapeHtml(timeBits.join(" · "))}</div>`
+      : "";
+
     item.innerHTML = `
-      <button type="button" class="delete-btn" data-action="delete" title="Delete spell">✕</button>
+      <button type="button" class="delete-btn" data-action="delete" title="${
+        isSent ? "Prune from history (two-tap)" : "Delete spell"
+      }">✕</button>
       <div class="spell-item-top">
         <div>
           <div class="spell-item-title">${escapeHtml(spell.purpose)}</div>
           <div class="spell-item-meta">${escapeHtml(spell.medium)} · ${escapeHtml(spellKindKey(spell))}${
             spell.engineeredFromAlignment ? " · aligned" : ""
-          }${isAlignmentSpell(spell) ? " · reveal" : ""}</div>
+          }${isAlignmentSpell(spell) ? " · reveal" : ""}${isSent ? " · sealed" : ""}</div>
         </div>
         <span class="${badgeClass}">${badgeText}</span>
       </div>
       <p class="spell-essence">${escapeHtml(spell.essence)}</p>
+      ${timeLine}
       <div class="spell-actions">
-        <button type="button" class="btn-spell copy" data-action="copy">Copy</button>
-        ${
-          spell.status !== "sent"
-            ? `<button type="button" class="btn-spell mark-sent" data-action="sent">Mark Sent</button>`
-            : ""
-        }
+        <button type="button" class="btn-spell copy" data-action="copy">${
+          isSent ? "Copy again" : "Copy"
+        }</button>
         <button type="button" class="btn-spell expand" data-action="expand">View</button>
       </div>
       <pre class="spell-full">${escapeHtml(md)}</pre>
     `;
     item
       .querySelector('[data-action="copy"]')
-      .addEventListener("click", () => copySpell(spell.id));
-    item
-      .querySelector('[data-action="sent"]')
-      ?.addEventListener("click", () => markSent(spell.id));
+      .addEventListener("click", () => copySpell(spell.id, { seal: !isSent }));
     item.querySelector('[data-action="expand"]').addEventListener("click", () => {
       item.classList.toggle("expanded");
       const btn = item.querySelector('[data-action="expand"]');
@@ -862,9 +968,13 @@ function deleteSpell(spellId) {
 function requestClearAllSpells() {
   const convo = activeConvo();
   if (!convo) return;
-  const list = spellsFor(convo.id);
+  if (ensureSpellView() === "history") {
+    toast("History is sealed — use Active tab + Clear Active", "");
+    return;
+  }
+  const list = activeSpellsFor(convo.id);
   if (!list.length) {
-    toast("No spells to clear", "");
+    toast("No active spells to clear", "");
     return;
   }
 
@@ -881,8 +991,8 @@ function requestClearAllSpells() {
 
   if (btn) {
     btn.classList.add("confirming");
-    btn.textContent = "CONFIRM CLEAR ALL?";
-    btn.title = "Tap again to wipe all spells for this focus";
+    btn.textContent = "CONFIRM CLEAR ACTIVE?";
+    btn.title = "Tap again to wipe active spells (history kept)";
   }
   toast("Tap again to confirm", "");
 
@@ -900,21 +1010,28 @@ function resetClearAllButton() {
   }
   if (els.btnClearAll) {
     els.btnClearAll.classList.remove("confirming");
-    els.btnClearAll.textContent = "Clear All";
-    els.btnClearAll.title = "Clear all spells for this focus";
+    els.btnClearAll.textContent =
+      ensureSpellView() === "history" ? "—" : "Clear Active";
+    els.btnClearAll.title =
+      ensureSpellView() === "history"
+        ? "History is sealed — clear only per-card with ✕"
+        : "Clear all active spells for this focus (history kept)";
   }
 }
 
 function clearAllSpellsForFocus(focusId) {
-  const ids = new Set(
-    state.spells.filter((s) => s.conversationId === focusId).map((s) => s.id)
+  // Only active — never wipe Cast History
+  const removeIds = new Set(
+    state.spells
+      .filter((s) => s.conversationId === focusId && s.status !== "sent")
+      .map((s) => s.id)
   );
-  state.spells = state.spells.filter((s) => s.conversationId !== focusId);
+  state.spells = state.spells.filter((s) => !removeIds.has(s.id));
 
   const focus = state.conversations.find((c) => c.id === focusId);
   if (focus) {
     focus.messages = (focus.messages || []).filter(
-      (m) => !(m.role === "spell" && ids.has(m.spellId))
+      (m) => !(m.role === "spell" && removeIds.has(m.spellId))
     );
   }
 
@@ -923,7 +1040,7 @@ function clearAllSpellsForFocus(focusId) {
   notifyConstellation(focusId, "standard");
   if (focus) syncFocusIntelligenceFile(focus);
 
-  toast("All spells cleared", "success");
+  toast("Active spells cleared — history kept", "success");
 }
 
 // ─── Render: constellation (living intelligence map) ───
@@ -1197,6 +1314,9 @@ function sendMessage(text) {
   // otherwise directives from alignment profile when intent/support exists.
   // Person/Network auto-forge on clear intent or supported general context.
   forgeAfterUserTurn(convo, userText, turn?.reply);
+
+  // Chrono-Ring lite: if this looks like a node/entity reply, stamp CAST cards answered
+  stampSpellAnsweredFromIngest(convo, userText);
 
   persist();
   renderChat();
@@ -1822,25 +1942,45 @@ function commitSpell(convo, spell, { silentToast = false } = {}) {
   const existing = state.spells.find(
     (s) =>
       s.conversationId === convo.id &&
+      s.status !== "sent" &&
+      (s.id === spell.id || spellsAreSameKindPurpose(s, spell))
+  );
+
+  // Sealed casts never reanimate into Active as REBUILT/REFILLED
+  const sealedSame = state.spells.find(
+    (s) =>
+      s.conversationId === convo.id &&
+      s.status === "sent" &&
       (s.id === spell.id || spellsAreSameKindPurpose(s, spell))
   );
 
   let rebuilt = false;
   if (existing) {
-    // Upgrade in place — keep id, refresh body against newest intel
+    // Upgrade in-place among ACTIVE only — keep id, refresh body against newest intel
     const keepId = existing.id;
-    const prevStatus = existing.status;
+    const forgedAt = existing.createdAt || Date.now();
     Object.assign(existing, spell, {
       id: keepId,
       conversationId: convo.id,
-      createdAt: Date.now(),
+      createdAt: forgedAt,
       rebuilt: true,
       rebuiltAt: Date.now(),
-      status: prevStatus === "sent" ? "ready" : prevStatus || "ready",
+      status: "ready",
+      sentAt: undefined,
+      copiedAt: existing.copiedAt,
+      answeredAt: existing.answeredAt,
     });
     rebuilt = true;
+  } else if (sealedSame) {
+    // New generation for same purpose — history keeps the old CAST card
+    spell.rebuilt = false;
+    spell.createdAt = spell.createdAt || Date.now();
+    spell.status = spell.status || "ready";
+    state.spells.push(spell);
   } else {
     spell.rebuilt = false;
+    spell.createdAt = spell.createdAt || Date.now();
+    spell.status = spell.status || "ready";
     state.spells.push(spell);
   }
 
@@ -1885,7 +2025,7 @@ function commitSpell(convo, spell, { silentToast = false } = {}) {
   if (!silentToast) {
     toast(
       rebuilt
-        ? `Spell rebuilt: ${stored.purpose}`
+        ? `Spell refilled: ${stored.purpose}`
         : isAlignmentSpell(stored)
           ? "Alignment Reveal → Spells panel + vault"
           : "Spell forged → Spells panel + vault",
@@ -2420,13 +2560,12 @@ function castSpell() {
   );
 }
 
-async function copySpell(id) {
+async function copySpell(id, { seal = true } = {}) {
   const spell = state.spells.find((s) => s.id === id);
   if (!spell) return;
   const md = formatSpellMarkdown(spell);
   try {
     await navigator.clipboard.writeText(md);
-    toast("Spell copied to clipboard", "success");
   } catch {
     const ta = document.createElement("textarea");
     ta.value = md;
@@ -2436,14 +2575,26 @@ async function copySpell(id) {
     ta.select();
     document.execCommand("copy");
     ta.remove();
-    toast("Spell copied to clipboard", "success");
+  }
+  spell.copiedAt = Date.now();
+  // Automagic cast close: Copy of an active spell == sent into the world
+  if (seal && spell.status !== "sent") {
+    markSent(id, { fromCopy: true });
+  } else {
+    persist();
+    renderSpells();
+    toast("Spell copied", "success");
   }
 }
 
-function markSent(id) {
+function markSent(id, { fromCopy = false } = {}) {
   const spell = state.spells.find((s) => s.id === id);
   if (!spell) return;
+  const now = Date.now();
   spell.status = "sent";
+  spell.sentAt = spell.sentAt || now;
+  spell.copiedAt = spell.copiedAt || now;
+  spell.rebuilt = false;
 
   // If alignment was sent, nudge user to paste the reply
   if (isAlignmentSpell(spell)) {
@@ -2452,8 +2603,8 @@ function markSent(id) {
       convo.messages.push({
         id: uid("msg"),
         role: "grimoire",
-        text: `Alignment Reveal marked **Sent**. When **${spell.target}** replies, paste their reveal here — I'll lock future spells to that frame.`,
-        ts: Date.now(),
+        text: `Alignment Reveal sealed to Cast History. When **${spell.target}** replies, paste their reveal here — I'll lock future spells to that frame.`,
+        ts: now,
       });
     }
   }
@@ -2465,21 +2616,25 @@ function markSent(id) {
 
   const focus = state.conversations.find((c) => c.id === spell.conversationId);
   if (focus) {
-    // Permanent constellation line lock
     if (state.activeId === focus.id) {
       universeEvent("sent", {
-        spellsSent: spellsFor(focus.id).filter((s) => s.status === "sent").length,
+        spellsSent: historySpellsFor(focus.id).length,
       });
       setFocusUniverse(deriveFocusSnapshot(focus, state.spells), { warp: false });
     }
     syncFocusIntelligenceFile(
       focus,
       "SPELL_SENT",
-      `${spell.purpose} marked SENT via ${spell.medium}`
+      `${spell.purpose} CAST via ${spell.medium} at ${new Date(spell.sentAt).toISOString()}`
     );
   }
 
-  toast("Spell marked as Sent", "success");
+  toast(
+    fromCopy
+      ? "Copied + sealed to Cast History — paste the reply when it returns"
+      : "Spell sealed to Cast History",
+    "success"
+  );
 }
 
 function createConversation({ name, type, aiSubtype, channel, archetype, medium } = {}) {
@@ -2660,10 +2815,19 @@ function toggleSpells() {
   }
 }
 
-els.btnToggleSpells?.addEventListener("click", toggleSpells);
+els.btnToggleSpells?.addEventListener("click", (e) => {
+  // With panel already open: cycle Active ↔ Cast History (tap icon again)
+  if (state.spellsOpen && !e.shiftKey) {
+    setSpellView(ensureSpellView() === "active" ? "history" : "active");
+    return;
+  }
+  toggleSpells();
+});
 els.btnCloseSpells?.addEventListener("click", () => {
   if (state.spellsOpen) toggleSpells();
 });
+els.tabSpellsActive?.addEventListener("click", () => setSpellView("active"));
+els.tabSpellsHistory?.addEventListener("click", () => setSpellView("history"));
 
 // "+ New Focus" — must always bind (never behind a throwing listener)
 els.btnNew?.addEventListener("click", () => {
