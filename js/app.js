@@ -3051,14 +3051,33 @@ function bindNewFocusButton() {
   const btn = document.getElementById("btn-new-convo") || els.btnNew;
   if (!btn || btn.dataset.boundNewFocus === "1") return;
   btn.dataset.boundNewFocus = "1";
+  btn.style.position = "relative";
+  btn.style.zIndex = "50";
+  btn.style.pointerEvents = "auto";
   btn.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
+    e.stopImmediatePropagation();
+    console.log("[NewFocus] button clicked", { tag: btn.tagName, id: btn.id, dialog: !!els.dialog, dialogOpen: els.dialog?.open, form: !!els.newForm });
     try {
-      showNewFocusModal({ name: "", type: "person", channel: "Discord" });
+      openNewFocusModal({ name: "", type: "person", channel: "Discord" });
+      const isOpen = els.dialog?.open || els.dialog?.hasAttribute?.("open");
+      if (!isOpen) {
+        // Fallback: force attribute-open if showModal/show failed silently
+        els.dialog?.setAttribute?.("open", "");
+      }
+      toast("New Focus dialog opened", "success");
     } catch (err) {
-      console.error("New Focus open failed", err);
-      toast("Could not open New Focus — check console", "");
+      console.error("[NewFocus] open failed", err);
+      toast(`New Focus error: ${err?.message || "see console"}`, "");
+      // Last resort: wait a frame and try raw dialog APIs
+      requestAnimationFrame(() => {
+        try {
+          if (typeof els.dialog?.showModal === "function") els.dialog.showModal();
+          else if (typeof els.dialog?.show === "function") els.dialog.show();
+          else els.dialog?.setAttribute?.("open", "");
+        } catch {}
+      });
     }
   });
 }
@@ -3070,9 +3089,11 @@ document.addEventListener("click", (e) => {
   // only if direct listener somehow mis-bound
   if (btn.dataset.boundNewFocus !== "1") {
     e.preventDefault();
-    showNewFocusModal({ name: "", type: "person", channel: "Discord" });
+    try {
+      showNewFocusModal({ name: "", type: "person", channel: "Discord" });
+    } catch {}
   }
-});
+}, true);
 
 els.btnClearAll?.addEventListener("click", () => {
   requestClearAllSpells();
