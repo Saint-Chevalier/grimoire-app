@@ -1522,14 +1522,13 @@ export function spellKindKey(spell) {
   return k || "standard";
 }
 
-export function normalizePurposeKey(purpose) {
-  return String(purpose || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+export function normalizePurposeKey(p) {
+  return String(p || "")
+    .replace(/[#*_`]/g, " ")
+    .replace(/\s+/g, " ")
     .trim()
-    .replace(/\s+/g, " ");
+    .toLowerCase();
 }
-
 /** Same kind + similar purpose ⇒ treat as one card. */
 export function spellsAreSameKindPurpose(a, b) {
   if (!a || !b) return false;
@@ -1540,12 +1539,13 @@ export function spellsAreSameKindPurpose(a, b) {
   if (pa === pb) return true;
   if (pa.length >= 10 && (pb.includes(pa) || pa.includes(pb))) return true;
   // Token overlap for near-duplicates
-  const ta = new Set(pa.split(" ").filter((w) => w.length > 3));
-  const tb = pb.split(" ").filter((w) => w.length > 3);
-  if (!ta.size || !tb.length) return false;
+  const tokens = (s) => new Set(s.split(" ").filter((w) => w.length > 3));
+  const ta = tokens(pa);
+  const tb = tokens(pb);
+  if (!ta.size || !tb.size) return false;
   let hit = 0;
   for (const w of tb) if (ta.has(w)) hit++;
-  return hit >= Math.min(2, ta.size) && hit / Math.max(ta.size, tb.length) >= 0.55;
+  return hit >= Math.min(2, ta.size) && hit / Math.max(ta.size, tb.size) >= 0.55;
 }
 
 /**

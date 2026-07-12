@@ -2273,15 +2273,15 @@ function renderIntelAtlas(convo) {
 
 function setAtlasOpen(open) {
   state.atlasOpen = Boolean(open);
-  const leg = atlasNodes().root;
-  if (!leg) return;
+  const at = atlasNodes();
+  if (!at || !at.root) return;
   if (open) {
-    renderIntelAtlas(activeConvo());
-    leg.removeAttribute("hidden");
-    leg.setAttribute("aria-hidden", "false");
+    renderIntelAtlas(at.focus);
+    at.root.removeAttribute("hidden");
+    at.root.setAttribute("aria-hidden", "false");
   } else {
-    leg.setAttribute("hidden", "");
-    leg.setAttribute("aria-hidden", "true");
+    at.root.setAttribute("hidden", "");
+    at.root.setAttribute("aria-hidden", "true");
   }
 }
 
@@ -2320,7 +2320,9 @@ function consolidateAndRestructureSpells(convo) {
 
   const before = state.spells.length;
   stripReceiptSpells(convo.id);
-  state.spells = dedupeSpells((state.spells || []).filter((s) => !isReceiptSpell(s)));
+  state.spells = dedupeSpells(
+    (state.spells || []).filter((s) => !isReceiptSpell(s))
+  );
   const purged = Math.max(0, before - state.spells.length);
 
   const atlas = buildFocusIntelAtlas(convo);
