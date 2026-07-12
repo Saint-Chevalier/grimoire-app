@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grimoire — Constellation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!-- WORLD: full-viewport universe canvas behind everything (z-index: -1) -->
+  <canvas id="universe-canvas" class="universe-canvas" aria-hidden="true"></canvas>
+  <!-- Legacy star DOM kept empty for compatibility; canvas is the world -->
+  <div id="stars-canvas" class="stars-canvas" aria-hidden="true" hidden>
+    <div id="constellation">
+      <div class="nebula"></div>
+      <div id="stars" class="stars"></div>
+      <svg id="constellation-lines" class="constellation-lines"></svg>
+    </div>
+  </div>
+
+  <!-- UI shell z-index 1+ -->
+  <div class="app">
+    <!-- LEFT: Focus list -->
+    <aside class="sidebar" id="sidebar">
+      <header class="sidebar-header">
+        <button type="button" class="btn-sidebar-toggle" id="btn-sidebar-toggle" title="Collapse focuses" aria-label="Collapse sidebar">
+          ‹
+        </button>
+        <div class="brand">
+          <span class="brand-glyph" aria-hidden="true">✧</span>
+          <div class="brand-text">
+            <h1>Grimoire</h1>
+            <p class="brand-sub">Constellation Codex</p>
+          </div>
+          <button type="button" class="btn-reset-app" id="btn-reset-app" title="Reset app — clears all saved data" aria-label="Reset app">↺</button>
+        </div>
+        <button type="button" class="btn-intel-folder" id="btn-intel-folder" title="Choose Intelligence Folder">
+          📁
+          <span class="vault-fail-dot" id="vault-fail-dot" hidden title="Vault write failed — click to re-link folder"></span>
+        </button>
+      </header>
+      <p class="intel-folder-status" id="intel-folder-status">Pick a folder — creates GRIMOIRE-FocusIntelligence/</p>
+
+      <div class="sidebar-section-label">FOCUSES</div>
+      <nav class="convo-list" id="convo-list" role="list"></nav>
+
+      <button type="button" class="btn-new-convo" id="btn-new-convo">
+        <span class="plus">+</span> <span class="btn-new-label">New Focus</span>
+      </button>
+    </aside>
+
+    <!-- CENTER: Chat (transparent — constellation shows through) -->
+    <main class="main chat-area">
+      <header class="chat-header" id="chat-header">
+        <div class="entity-meta">
+          <span class="entity-icon" id="entity-icon">✧</span>
+          <div>
+            <h2 id="entity-name">Select a focus</h2>
+            <p class="entity-type" id="entity-type">—</p>
+            <p class="universe-stage" id="universe-stage">VOID</p>
+          </div>
+        </div>
+        <div class="header-controls">
+          <div class="sealed-channel-badge" id="sealed-channel-badge" title="Sealed channel — one Focus, one receiver">
+            <span class="label">Channel</span>
+            <span class="sealed-value" id="sealed-channel-value">—</span>
+          </div>
+          <button type="button" class="btn-icon" id="btn-toggle-spells" title="Toggle Spells panel" aria-label="Toggle Spells panel">
+            <span class="spell-icon">✦</span>
+            <span class="spell-count" id="spell-count">0</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="chat-area-wrapper">
+        <div class="chat-messages" id="chat-messages" role="log" aria-live="polite">
+          <div class="empty-state" id="empty-state">
+            <div class="empty-glyph">✧</div>
+            <p>Open a focus. Speak to Grimoire about that focus target.</p>
+            <p class="empty-hint">Spells you craft will appear in the right panel — copy, send, mark as Sent.</p>
+          </div>
+        </div>
+
+        <div class="constellation-ping" id="constellation-ping" aria-live="polite"></div>
+        <footer class="chat-input-bar">
+          <div class="pending-images" id="pending-images" hidden></div>
+          <form id="chat-form" class="chat-form" autocomplete="off">
+            <textarea
+              id="chat-input"
+              class="chat-input"
+              rows="1"
+              placeholder="Select a focus to speak…"
+              disabled
+            ></textarea>
+            <div class="input-actions">
+              <button type="button" class="btn-secondary" id="btn-cast-spell" title="Consolidate Focus intelligence → restructure ready spells" disabled>
+                Cast Spell
+              </button>
+              <button type="button" class="btn-secondary" id="btn-attach" title="Attach image" disabled>
+                📎
+              </button>
+              <button type="submit" class="btn-send btn-primary" id="btn-send" title="Send" disabled>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              </button>
+            </div>
+          </form>
+        </footer>
+      </div>
+    </main>
+
+    <!-- RIGHT: Spells panel -->
+    <aside class="spells-panel" id="spells-panel">
+      <header class="spells-header">
+        <h3>Spells</h3>
+        <div class="spells-header-actions">
+          <button type="button" class="btn-clear-all" id="btn-clear-all" title="Clear all spells for this focus">Clear All</button>
+          <button type="button" class="btn-icon subtle" id="btn-close-spells" title="Collapse panel" aria-label="Collapse Spells panel">›</button>
+        </div>
+      </header>
+      <p class="spells-hint">Pending & ready spells for this focus. Copy → send outside Grimoire → mark Sent.</p>
+      <div class="spells-list" id="spells-list"></div>
+    </aside>
+  </div>
+
+  <!-- New Focus modal -->
+  <dialog id="new-convo-dialog" class="modal">
+    <form method="dialog" id="new-convo-form" class="modal-form">
+      <h2>New Focus</h2>
+      <label>
+        Focus target name
+        <input type="text" id="new-entity-name" required placeholder="e.g. Oracle, Alex, Partners list" />
+      </label>
+      <label>
+        Type
+        <select id="new-entity-type">
+          <option value="person">Person</option>
+          <option value="ai">AI</option>
+          <option value="network">Network</option>
+        </select>
+      </label>
+      <label id="new-ai-subtype-label" hidden>
+        Backend
+        <select id="new-entity-ai-subtype">
+          <option value="Hermes">Hermes</option>
+          <option value="Claude">Claude</option>
+          <option value="ChatGPT">ChatGPT</option>
+          <option value="Grok">Grok</option>
+          <option value="Local">Local</option>
+          <option value="Custom">Custom</option>
+        </select>
+      </label>
+      <label id="new-channel-label">
+        Medium
+        <select id="new-entity-channel">
+          <option value="Discord">Discord</option>
+          <option value="Text">Text</option>
+          <option value="Email">Email</option>
+          <option value="LinkedIn">LinkedIn</option>
+        </select>
+      </label>
+      <p class="modal-hint">One Focus = one sealed channel. Same name on a different backend gets a separate Focus.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="btn-cancel-new">Cancel</button>
+        <button type="submit" class="btn-primary">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Universe HUD chip (star count + stage) — click opens Intel Atlas -->
+  <button type="button" class="universe-hud" id="universe-hud" title="Open Intel Atlas — everything this Focus knows">
+    ★ <span id="universe-hud-count">0</span> · <span id="universe-hud-stage">VOID</span>
+  </button>
+  <!-- Intel Atlas modal overlay -->
+  <div id="universe-legend" class="atlas-overlay" hidden role="dialog" aria-label="Intel Atlas">
+    <div class="atlas-modal">
+      <header class="atlas-header">
+        <strong id="atlas-title">Intel Atlas</strong>
+        <button type="button" class="atlas-close" id="btn-atlas-close" title="Close" aria-label="Close">×</button>
+      </header>
+      <p class="atlas-sub" id="atlas-sub">Look around the universe. This is what Grimoire knows about this Focus.</p>
+      <div class="atlas-body" id="atlas-body">
+        <p class="atlas-empty">Select a focus to inspect its intelligence.</p>
+      </div>
+      <footer class="atlas-foot">
+        <span class="atlas-economy">☉ align · ★ intel · ♃ directives · ☄ spells · ✦ sent</span>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

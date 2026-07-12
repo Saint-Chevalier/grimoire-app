@@ -1,0 +1,29 @@
+# Dependencies / tooling
+node_modules/
+.vite/
+.DS_Store
+Thumbs.db
+*.log
+
+# Local environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Local intelligence vault (NEVER ship user vaults)
+GRIMOIRE-FocusIntelligence/
+**/FocusIntelligence/
+
+# Local-only runtime dumps
+*.local.md
+private/
+secrets/
+
+# OS
+Desktop.ini
