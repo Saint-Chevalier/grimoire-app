@@ -3058,27 +3058,37 @@ function bindNewFocusButton() {
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-    console.log("[NewFocus] button clicked", { tag: btn.tagName, id: btn.id, dialog: !!els.dialog, dialogOpen: els.dialog?.open, form: !!els.newForm });
+    console.log("[NewFocus] click handler fired");
     try {
       openNewFocusModal({ name: "", type: "person", channel: "Discord" });
-      const isOpen = els.dialog?.open || els.dialog?.hasAttribute?.("open");
-      if (!isOpen) {
-        // Fallback: force attribute-open if showModal/show failed silently
-        els.dialog?.setAttribute?.("open", "");
-      }
-      toast("New Focus dialog opened", "success");
+      console.log("[NewFocus] openNewFocusModal returned without throwing");
     } catch (err) {
-      console.error("[NewFocus] open failed", err);
-      toast(`New Focus error: ${err?.message || "see console"}`, "");
-      // Last resort: wait a frame and try raw dialog APIs
-      requestAnimationFrame(() => {
-        try {
-          if (typeof els.dialog?.showModal === "function") els.dialog.showModal();
-          else if (typeof els.dialog?.show === "function") els.dialog.show();
-          else els.dialog?.setAttribute?.("open", "");
-        } catch {}
-      });
+      console.error("[NewFocus] openNewFocusModal threw", err);
     }
+    // Always attempt visible open regardless of try/catch outcome
+    requestAnimationFrame(() => {
+      console.log("[NewFocus] post-RAF dialog state", {
+        dialogExists: !!els.dialog,
+        dialogTag: els.dialog?.tagName,
+        dialogOpen: els.dialog?.open,
+        dialogHasAttrOpen: els.dialog?.hasAttribute?.("open"),
+      });
+      try {
+        if (!els.dialog) return;
+        if (typeof els.dialog.showModal === "function") {
+          els.dialog.showModal();
+          console.log("[NewFocus] used showModal()");
+        } else if (typeof els.dialog.show === "function") {
+          els.dialog.show();
+          console.log("[NewFocus] used show()");
+        } else {
+          els.dialog.setAttribute("open", "");
+          console.log("[NewFocus] used setAttribute(open)");
+        }
+      } catch (err) {
+        console.error("[NewFocus] post-RAF open failed", err);
+      }
+    });
   });
 }
 bindNewFocusButton();
