@@ -1146,7 +1146,6 @@ function updateUniverseHudChrome(snap) {
       : "VOID";
   }
 }
-}
 
 /**
  * After spell creation / focus switch — grow the living map for this Focus.
