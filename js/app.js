@@ -571,11 +571,31 @@ function renderChat() {
     return;
   }
 
+  const arch = ARCHETYPES[convo.archetype] || ARCHETYPES.wizard || { icon: "✧" };
+  els.entityIcon.textContent = arch.icon || "✧";
+  els.entityName.textContent = convo.name;
+  els.entityType.textContent = typeof typeLabel === "function" ? typeLabel(convo) : (convo.type || "—");
+  if (els.sealedChannelValue) {
+    els.sealedChannelValue.textContent = getSealedChannel(convo);
+  }
+  if (els.universeStage) {
+    const snap = deriveFocusSnapshot(convo, state.spells);
+    els.universeStage.textContent = `${getSealedChannel(convo)} · ${snap?.stageName || "VOID"}`;
+  }
+  setChatControlsEnabled(true);
+  if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) {
+    els.chatInput.placeholder = `Speak about ${convo.name} — or Cast Spell for Alignment Reveal…`;
+  } else if (isAiNode(convo)) {
+    els.chatInput.placeholder = `Speak about ${convo.name} — densen intel or Cast Spell…`;
+  } else {
+    els.chatInput.placeholder = `Speak to Grimoire about ${convo.name}…`;
+  }
+
   if (!convo.messages.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `
-      <div class="empty-glyph">${ARCHETYPES[convo.archetype]?.icon || "✧"}</div>
+      <div class="empty-glyph">${arch.icon || "✧"}</div>
       <p>Focus on <strong>${escapeHtml(convo.name)}</strong> is open.</p>
       <p class="empty-hint">${
         isAiNode(convo)
@@ -594,9 +614,11 @@ function renderChat() {
 
     // Collapse silent inbound receipts into one grimoire note, not bubbles.
     if (m.kind === "inbound-intel") {
-      const receipt = isHoldOrLoopReply(m.text) ? "Frame held — not recast."
-        : isInboundNodeIntel(m.text) ? "Node receipt densened — no new spell forged."
-        : "Inbound intel densened.";
+      const receipt = isHoldOrLoopReply(m.text)
+        ? "Frame held — not recast."
+        : isInboundNodeIntel(m.text)
+          ? "Node receipt densened — no new spell forged."
+          : "Inbound intel densened.";
       if (lastReceiptKind !== "inbound-intel") {
         const note = document.createElement("div");
         note.className = "message system";
@@ -3024,9 +3046,32 @@ els.btnCloseSpells?.addEventListener("click", () => {
 els.tabSpellsActive?.addEventListener("click", () => setSpellView("active"));
 els.tabSpellsHistory?.addEventListener("click", () => setSpellView("history"));
 
-// "+ New Focus" — must always bind (never behind a throwing listener)
-els.btnNew?.addEventListener("click", () => {
-  showNewFocusModal({ name: "", type: "person", channel: "Discord" });
+// "+ New Focus" — always available; also handle clicks even if DOM re-queries
+function bindNewFocusButton() {
+  const btn = document.getElementById("btn-new-convo") || els.btnNew;
+  if (!btn || btn.dataset.boundNewFocus === "1") return;
+  btn.dataset.boundNewFocus = "1";
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      showNewFocusModal({ name: "", type: "person", channel: "Discord" });
+    } catch (err) {
+      console.error("New Focus open failed", err);
+      toast("Could not open New Focus — check console", "");
+    }
+  });
+}
+bindNewFocusButton();
+// Safety net: delegated click in case of dynamic re-render issues
+document.addEventListener("click", (e) => {
+  const btn = e.target?.closest?.("#btn-new-convo");
+  if (!btn) return;
+  // only if direct listener somehow mis-bound
+  if (btn.dataset.boundNewFocus !== "1") {
+    e.preventDefault();
+    showNewFocusModal({ name: "", type: "person", channel: "Discord" });
+  }
 });
 
 els.btnClearAll?.addEventListener("click", () => {
