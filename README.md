@@ -124,6 +124,8 @@ MIT — see `LICENSE`.
 
 Actively evolved. Local loop proven. Open-source path is the recruit door.
 
+**Next up (public-safe):** [Chrono-Ring / roadmap](docs/ROADMAP.md) — read-only *when* truth densened for a Focus. Not shipped in code yet; method locked.
+
 ---
 
 *Built for operators who treat words as causal force — and still ship code without theater.*
