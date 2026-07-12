@@ -553,7 +553,6 @@ function renderChat() {
     if (els.universeStage) els.universeStage.textContent = "VOID";
     setChatControlsEnabled(false);
     if (els.chatInput) els.chatInput.placeholder = "Select a focus to speak…";
-    // Select-a-focus empty state
     const empty =
       els.emptyState ||
       (() => {
@@ -572,49 +571,45 @@ function renderChat() {
     return;
   }
 
-  const arch = ARCHETYPES[convo.archetype] || ARCHETYPES.wizard;
-  els.entityIcon.textContent = arch.icon;
-  els.entityName.textContent = convo.name;
-  els.entityType.textContent = typeLabel(convo);
-  if (els.sealedChannelValue) {
-    els.sealedChannelValue.textContent = getSealedChannel(convo);
-  }
-  // Universe stage under focus name: e.g. EXPANSION
-  if (els.universeStage) {
-    const snap = deriveFocusSnapshot(convo, state.spells);
-    const st = universeStage(snap.intelCount, snap.spellsSent, snap.aligned);
-    els.universeStage.textContent = `${getSealedChannel(convo)} · ${st.name}`;
-  }
-  setChatControlsEnabled(true);
-
-  if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) {
-    els.chatInput.placeholder = `Speak about ${convo.name} — or Cast Spell for Alignment Reveal…`;
-  } else if (isAiNode(convo)) {
-    els.chatInput.placeholder = `Speak about ${convo.name} — densen intel or Cast Spell…`;
-  } else {
-    els.chatInput.placeholder = `Speak to Grimoire about ${convo.name}…`;
-  }
-
   if (!convo.messages.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `
-      <div class="empty-glyph">${arch.icon}</div>
+      <div class="empty-glyph">${ARCHETYPES[convo.archetype]?.icon || "✧"}</div>
       <p>Focus on <strong>${escapeHtml(convo.name)}</strong> is open.</p>
       <p class="empty-hint">${
         isAiNode(convo)
           ? "AI nodes start with Alignment Reveal. Speak about the node → stars densen → Cast Spell consolidates atlas + ready stack. Spells panel only."
-          : "Talk about them — Grimoire remembers eternally. Cast Spell consolidates intel into messages <em>or</em> action-spells (sweeping the floor is a cleaning spell)."
+          : "Talk about them — Grimoire remembers eternally. Cast Spell consolidates intel into messages <em>or</em> action-spells."
       }</p>
     `;
     els.chatMessages.appendChild(empty);
     return;
   }
 
+  let lastReceiptKind = null;
   convo.messages.forEach((m) => {
-    // Suppress legacy junk: auto-discovery + inline spell cards (spells = panel only)
     if (m.kind === "focus-suggestion") return;
     if (m.role === "spell") return;
+
+    // Collapse silent inbound receipts into one grimoire note, not bubbles.
+    if (m.kind === "inbound-intel") {
+      const receipt = isHoldOrLoopReply(m.text) ? "Frame held — not recast."
+        : isInboundNodeIntel(m.text) ? "Node receipt densened — no new spell forged."
+        : "Inbound intel densened.";
+      if (lastReceiptKind !== "inbound-intel") {
+        const note = document.createElement("div");
+        note.className = "message system";
+        note.innerHTML = `
+          <div class="message-header message-role">System</div>
+          <div class="message-row"><div class="message-body">${escapeHtml(receipt)}</div></div>
+        `;
+        els.chatMessages.appendChild(note);
+        lastReceiptKind = "inbound-intel";
+      }
+      return;
+    }
+    lastReceiptKind = null;
     els.chatMessages.appendChild(renderMessage(m));
   });
 
@@ -1114,13 +1109,13 @@ function updateUniverseHudChrome(snap) {
   if (els.universeHudCount) els.universeHudCount.textContent = String(starCount);
   if (els.universeHudStage) {
     const hpBit = health ? ` · ${healthHudChip(health)}` : "";
-    els.universeHudStage.textContent = `${stageName}${hpBit}`;
+    const updated = health?.lastRecalculated ? ` · updated ${new Date(health.lastRecalculated).toLocaleTimeString()}` : "";
+    els.universeHudStage.textContent = `${stageName}${hpBit}${updated}`;
   }
   if (els.universeHud) {
     els.universeHud.title = health
       ? `${health.summary} — click for Intel Atlas / Healer health`
       : "Intel Atlas";
-    els.universeHud.dataset.healthBand = health?.band || "";
   }
   if (els.universeStage) {
     const ch = snap?.focusId && convo ? `${getSealedChannel(convo)}` : "";
@@ -1128,6 +1123,7 @@ function updateUniverseHudChrome(snap) {
       ? `${stageName}${health ? ` · HP ${health.hp}` : ""}${ch ? "" : ""}`
       : "VOID";
   }
+}
 }
 
 /**
@@ -1256,6 +1252,41 @@ function sendMessage(text) {
   ensureAlignmentDirective(convo);
 
   const sentImages = takePendingImagesForSend();
+  const inboundReceipt = isInboundNodeIntel(userText) || isHoldOrLoopReply(userText);
+
+  if (inboundReceipt) {
+    // Densens + stamp answers, but don't pollute chat with fake-user bubbles.
+    // Still persists to vault via ingestIntelligence / stampSpellAnsweredFromIngest.
+    convo.messages.push({
+      id: uid("msg"),
+      role: "user",
+      text: userText,
+      images: sentImages,
+      ts: Date.now(),
+      kind: "inbound-intel",
+    });
+
+    ensureAlignmentDirective(convo);
+    const medium = syncMediumFromControls(convo);
+    const ingested = ingestIntelligence(convo, userText);
+    stampSpellAnsweredFromIngest(convo, userText);
+
+    persist();
+    renderChat();
+    renderConvoList();
+    renderSpells();
+    renderIntelAtlas(convo);
+
+    const receipt =
+      ingested?.alignmentJustLocked ?
+        "Alignment reply received — spellcraft unlocked."
+      : isHoldOrLoopReply(userText) ?
+        "Node receipt densened — frame held, not recast."
+      : "Inbound intel densened — no new spell forged.";
+    toast(receipt, "");
+    return;
+  }
+
   convo.messages.push({
     id: uid("msg"),
     role: "user",

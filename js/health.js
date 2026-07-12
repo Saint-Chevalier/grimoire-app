@@ -338,6 +338,7 @@ export function computeFocusHealth(convo, spells = []) {
     summary,
     healerNote,
     sealed: getSealedChannel(convo),
+    lastRecalculated: Date.now(),
   };
 }
 
