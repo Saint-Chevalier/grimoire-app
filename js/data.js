@@ -9,6 +9,7 @@ export const ARCHETYPES = {
   wizard:  { icon: "✧", label: "Wizard",  kind: "AI" },
   sage:    { icon: "📜", label: "Sage",    kind: "AI" },
   knight:  { icon: "⚔", label: "Knight",  kind: "AI" },
+  healer:  { icon: "✚", label: "Healer",  kind: "AI" },
   person:  { icon: "◎", label: "Person",  kind: "Person" },
   network: { icon: "⬡", label: "Network", kind: "Network" },
 };
@@ -35,7 +36,7 @@ export const NETWORK_PLATFORMS = ["LinkedIn", "X", "Discord Server"];
 /** @deprecated use PERSON_CHANNELS / AI_SUBTYPES / NETWORK_PLATFORMS */
 export const MEDIUMS = ["Hermes", "Discord", "LinkedIn", "Text", "Email", "X", "Claude", "ChatGPT", "Grok", "Local", "Custom"];
 
-export const AI_ARCHETYPES = new Set(["wizard", "sage", "knight"]);
+export const AI_ARCHETYPES = new Set(["wizard", "sage", "knight", "healer"]);
 
 export const ALIGNMENT_PURPOSE = "TRANSPARENCY & ALIGNMENT REVEAL";
 
@@ -276,6 +277,67 @@ export const SEED_CONVERSATIONS = [
     ],
   },
   {
+    id: "healer-hermes",
+    name: "Healer",
+    archetype: "healer",
+    medium: "Hermes",
+    backend: "Hermes",
+    type: "ai",
+    aiSubtype: "Hermes",
+    star: { x: 52, y: 48 },
+    messages: [
+      {
+        id: "hl-m0",
+        role: "grimoire",
+        text: "Sealed channel: **Healer · Hermes**. Integrity gate. Hit **Cast Spell** for Alignment Reveal on this backend only.",
+        ts: Date.now() - 95000000,
+        kind: "alignment-directive",
+      },
+      {
+        id: "hl-m1",
+        role: "user",
+        text: "Healer holds the integrity of this constellation. Purpose: system integrity without drift. Not a builder. Gate/ward — audit, heal, verify.",
+        ts: Date.now() - 94000000,
+      },
+      {
+        id: "hl-m2",
+        role: "grimoire",
+        text: "Healer world opened. Prefer precision over poetry. Demand evidence chains, disk verification, readback.",
+        ts: Date.now() - 93900000,
+      },
+      {
+        id: "hl-m3",
+        role: "user",
+        text: "PROMPT ENGINEERING INTEL BAKE-IN for AI nodes we work with:\n\n1) Always open with IDENTITY → PURPOSE → SIGNAL (1–10 with reason).\n2) Force structure: ACTION TAKEN · EVIDENCE · NEXT THREE MOVES.\n3) Receipt classifiers: ACK / ACTION TAKEN / FRAME HOLDING / SPELL RECEIVED = inbound intel, NOT new forge triggers after alignment.\n4) Alignment Reveal before tasking — never invent tools or authorities the node did not list.\n5) Demand Pulse: lone \".\" means full Autonomous execution mode when protocol is on file.\n6) Prefer numbered directives with pass/fail criteria over vibes.\n7) Lane lock language: each node writes only its own stone; report mutations, do not tour other windows to \"fix\" them.\n8) Reality-fit > frame-fit. Never authenticate cooperation in place of disk truth.\n9) Model ops hygiene: ops work prefers freer/faster models when quality holds; premium models reserved for doctrine hardness / teaching depth.\n10) Decay will kill prompts — schedule re-read of skills, lane stones, and open threads.",
+        ts: Date.now() - 92000000,
+      },
+      {
+        id: "hl-m4",
+        role: "grimoire",
+        text: "Captured ten prompt-engineering axioms for this Focus. Universe densened. Use ★ Atlas anytime.",
+        ts: Date.now() - 91900000,
+      },
+      {
+        id: "hl-m5",
+        role: "user",
+        text: "SCROLL ECOSYSTEM TRUTHS Healer must hold:\n• 1 Focus = 1 sealed channel = one world.\n• Spells = AI directives OR human messages OR physical actions.\n• Identity → method → product. Substrate (app rebuilds) is paper; operator is signal.\n• Public method door may open without dumping private doctrine.\n• Chrono-Ring (roadmap): when truth became true — timeline of a world, read-only first.\n• Write paths in app vault: only GRIMOIRE-FocusIntelligence Focus files under operator permission.\n• Mutation prevention: skip disk write when content unchanged; never full-overwrite from partial reads.",
+        ts: Date.now() - 88000000,
+      },
+      {
+        id: "hl-m6",
+        role: "user",
+        text: "DECAY CHECKLIST — things destined to rot if not touched:\n[ ] Agentic skills older than 14 days without verification (commands change)\n[ ] Node Intelligence dossiers vs actual last cast behavior (drift)\n[ ] Arc mesh: external stone path case (Windows NTFS merges Healer/HEALER)\n[ ] Open high-value untested gates (e.g. multi-axis isolation tests)\n[ ] Receipt classifiers vs latest node ACK dialects\n[ ] Public repo frontmatter vs private identity claims (leak risk)\n[ ] Cron anchors that stopped firing\n[ ] Alignment notes that no longer match live node model matrix\nRun these as integrity spells, not vibes.",
+        ts: Date.now() - 85000000,
+      },
+      {
+        id: "hl-m7",
+        role: "grimoire",
+        text: "Decay checklist locked into this world. Next Cast Spell can forge an integrity audit or prompt-gate review from this atlas.",
+        ts: Date.now() - 84900000,
+      },
+    ],
+  },
+  {
     id: "misty-discord",
     name: "Misty",
     archetype: "person",
@@ -365,6 +427,79 @@ export const SEED_SPELLS = [
       "Hey Misty — free any evening this week? Would love to catch up. Let me know what works for you.",
     status: "ready",
     createdAt: Date.now() - 59000000,
+    kind: "standard",
+  },
+  {
+    id: "healer-hermes-001",
+    conversationId: "healer-hermes",
+    target: "Healer",
+    purpose: "Integrity Scan — Prompt Gates + Decay",
+    medium: "Hermes",
+    from: "Operator",
+    essence:
+      "Commission Healer to audit AI-node prompt craft, ecosystem truths, and decay checklist with evidence tables.",
+    message: [
+      "Healer —",
+      "",
+      "TRANSMISSION TYPE: INTEGRITY DIRECTIVE",
+      "MEDIUM: Hermes",
+      "PURPOSE: Integrity Scan — Prompt Gates + Decay",
+      "",
+      "CONTEXT: Alignment and dense operator intel on file for this sealed channel.",
+      "You are gate/ward — not builder. Precision over poetry.",
+      "",
+      "DIRECTIVE:",
+      "1. Audit prompt-engineering posture for AI nodes we operate:",
+      "   - Alignment-before-task discipline",
+      "   - Receipt vs directive classification",
+      "   - ACTION TAKEN · EVIDENCE · NEXT THREE MOVES shape",
+      "   - Reality-fit over frame-fit",
+      "2. Hold Scroll ecosystem truths: 1 Focus = 1 world; human is the bus; identity → method → product.",
+      "3. Run the DECAY CHECKLIST (skills, node dossiers, path case, untested gates, public/private wall, cron anchors, model matrix drift).",
+      "4. Return with tables: PASS / FAIL / WATCH + one corrective spell per FAIL.",
+      "5. Do not write outside Healer lanes. Do not mutate other archetype stones.",
+      "",
+      "Hold the watch. Report signal with evidence. End with Pulse: .",
+      "",
+      "— Operator",
+    ].join("\n"),
+    status: "ready",
+    createdAt: Date.now() - 84000000,
+    kind: "standard",
+  },
+  {
+    id: "healer-hermes-002",
+    conversationId: "healer-hermes",
+    target: "Healer",
+    purpose: "Prompt Gate — Node Alignment Hygiene",
+    medium: "Hermes",
+    from: "Operator",
+    essence:
+      "Demand a portable prompt-gate checklist any AI Focus can run before deep casts.",
+    message: [
+      "Healer —",
+      "",
+      "TRANSMISSION TYPE: INTEGRITY DIRECTIVE",
+      "MEDIUM: Hermes",
+      "PURPOSE: Prompt Gate — Node Alignment Hygiene",
+      "",
+      "DIRECTIVE:",
+      "Produce a reusable PROMPT GATE (checklist) for casting to any AI node:",
+      "- What must be true before Alignment Reveal",
+      "- What must be true before engineered directives",
+      "- How to detect inbound receipts that must never auto-forge",
+      "- How to score signal 1–10 with honest deductions",
+      "- How decay is detected in language that used to work",
+      "",
+      "Format for operators: short gates, numbered, falsifiable.",
+      "No poetry without force. Evidence path optional but preferred.",
+      "",
+      "Pulse: .",
+      "",
+      "— Operator",
+    ].join("\n"),
+    status: "ready",
+    createdAt: Date.now() - 83500000,
     kind: "standard",
   },
 ];
@@ -1007,6 +1142,7 @@ function derivePurpose(context, arch, target) {
       wizard: "Strategic Opening",
       sage: "Field Reading",
       knight: "Protective Watch",
+      healer: "Integrity Scan",
       person: "Check-in",
       network: "Public Signal",
     };
@@ -1133,6 +1269,11 @@ function aiNodeMessage({
     knight: {
       frame: "OPERATIONAL ORDER",
       close: "Hold the watch. Act only on clear signal. Report when the field shifts.",
+    },
+    healer: {
+      frame: "INTEGRITY DIRECTIVE",
+      close:
+        "Audit with evidence tables. Report PASS / FAIL / WATCH. Correct only in-lane. End with Pulse: .",
     },
   }[arch] || {
     frame: "NODE TRANSMISSION",
@@ -1321,6 +1462,36 @@ function migrateState(state) {
   if (!hasWkGrok) {
     const seed = SEED_CONVERSATIONS.find((c) => c.id === "wizard-king-grok");
     if (seed) state.conversations.push(structuredClone(seed));
+  }
+
+  // Inject Healer books of worlds for existing localStorage sessions
+  const hasHealerHermes = (state.conversations || []).some(
+    (c) => focusIdentityKey(c.name, getSealedChannel(c)) === "healer::hermes"
+  );
+  if (!hasHealerHermes) {
+    const seed = SEED_CONVERSATIONS.find((c) => c.id === "healer-hermes");
+    if (seed) {
+      state.conversations.push(structuredClone(seed));
+      const seedSpells = SEED_SPELLS.filter(
+        (s) => s.conversationId === "healer-hermes"
+      );
+      for (const s of seedSpells) {
+        if (!(state.spells || []).some((x) => x.id === s.id)) {
+          state.spells = state.spells || [];
+          state.spells.push(structuredClone(s));
+        }
+      }
+    }
+  } else {
+    // Ensure healer archetype label (not silent wizard map)
+    for (const c of state.conversations || []) {
+      if (
+        focusIdentityKey(c.name, getSealedChannel(c)) === "healer::hermes" &&
+        c.archetype !== "healer"
+      ) {
+        c.archetype = "healer";
+      }
+    }
   }
 
   if (
