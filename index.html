@@ -134,19 +134,19 @@
       <h2>New Focus</h2>
       <label>
         Focus target name
-        <input type="text" id="new-entity-name" required placeholder="e.g. Oracle, Alex, Partners list" />
+        <input type="text" id="new-entity-name" required placeholder="e.g. Grok, Misty, Dragon" autocomplete="off" />
       </label>
       <label>
         Type
         <select id="new-entity-type">
           <option value="person">Person</option>
           <option value="ai">AI</option>
-          <option value="network">Network</option>
         </select>
       </label>
-      <label id="new-ai-subtype-label" hidden>
-        Backend
-        <select id="new-entity-ai-subtype">
+      <label id="new-model-label" hidden>
+        Model <span class="field-optional">(optional)</span>
+        <select id="new-entity-model">
+          <option value="none">None — open AI</option>
           <option value="Hermes">Hermes</option>
           <option value="Claude">Claude</option>
           <option value="ChatGPT">ChatGPT</option>
@@ -155,16 +155,10 @@
           <option value="Custom">Custom</option>
         </select>
       </label>
-      <label id="new-channel-label">
-        Medium
-        <select id="new-entity-channel">
-          <option value="Discord">Discord</option>
-          <option value="Text">Text</option>
-          <option value="Email">Email</option>
-          <option value="LinkedIn">LinkedIn</option>
-        </select>
-      </label>
-      <p class="modal-hint">One Focus = one sealed channel. Same name on a different backend gets a separate Focus.</p>
+      <p class="modal-hint" id="new-focus-hint">
+        Person: you densen who they are and craft message-spells for real life.
+        Medium is open — Discord, Text, in-person, anything.
+      </p>
       <div class="modal-actions">
         <button type="button" class="btn-secondary" id="btn-cancel-new">Cancel</button>
         <button type="submit" class="btn-primary">Create</button>

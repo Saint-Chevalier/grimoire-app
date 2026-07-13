@@ -81,15 +81,24 @@ export function mediumFromType(type, { aiSubtype, channel } = {}) {
 }
 
 /**
- * Sealed channel identity for a Focus (backend / medium / platform).
- * One Focus = one specific receiver — never multiplexed.
+ * Sealed identity for a Focus.
+ * AI: optional model (Hermes/Grok/…) or "Open" when none.
+ * Person: always "Open" — medium is real-life delivery, not a locked dropdown.
  */
 export function getSealedChannel(focus) {
   if (!focus) return "—";
-  return focus.backend || focus.aiSubtype || focus.medium || "—";
+  const t = getFocusType(focus);
+  if (t === "person") return "Open";
+  // legacy networks keep stored backend if present
+  if (t === "network") {
+    return focus.backend || focus.medium || "Network";
+  }
+  const model = focus.model || focus.backend || focus.aiSubtype || focus.medium;
+  if (!model || model === "none" || model === "Open" || model === "—") return "Open";
+  return model;
 }
 
-/** Identity key: name + sealed channel (case-insensitive) */
+/** Identity key: name + sealed model/channel (case-insensitive) */
 export function focusIdentityKey(name, channel) {
   return `${String(name || "")
     .toLowerCase()
@@ -111,55 +120,69 @@ export function makeFocusId(name, channel) {
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "") || "focus";
-  const c = String(channel || "channel")
+  const c = String(channel || "open")
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "") || "channel";
+    .replace(/^-|-$/g, "") || "open";
   return `${n}-${c}`;
 }
 
 /**
- * Apply type + sealed channel onto a focus (at creation / migration only).
- * After creation the channel is immutable in the UI.
+ * Apply type + optional model onto a focus (at creation / migration only).
+ * Medium of delivery is never locked by UI — Person spells go anywhere.
  */
-export function applyFocusClassification(convo, { type, aiSubtype, channel, backend } = {}) {
-  const t = type || getFocusType(convo);
-  convo.type = t === "ai-node" ? "ai" : t === "broadcast" ? "network" : t;
+export function applyFocusClassification(convo, { type, aiSubtype, channel, backend, model } = {}) {
+  let t = type || getFocusType(convo);
+  if (t === "ai-node") t = "ai";
+  if (t === "broadcast") t = "network";
+  // New creates are person | ai only; preserve legacy network focuses
+  if (t !== "ai" && t !== "network") t = "person";
+  convo.type = t;
 
   if (convo.type === "ai") {
-    const sealed =
-      backend || aiSubtype || convo.backend || convo.aiSubtype || "Hermes";
-    convo.aiSubtype = sealed;
+    const raw =
+      model ||
+      backend ||
+      aiSubtype ||
+      convo.model ||
+      convo.backend ||
+      convo.aiSubtype ||
+      "none";
+    const sealed = !raw || raw === "none" ? "Open" : raw;
+    convo.model = sealed === "Open" ? "none" : sealed;
+    convo.aiSubtype = sealed === "Open" ? undefined : sealed;
     convo.backend = sealed;
-    convo.medium = sealed; // spell format **Medium:** uses sealed backend name
-    convo.archetype = archetypeFromType("ai", sealed);
+    convo.medium = sealed; // spell format still shows optional model when set
+    convo.archetype = sealed === "Open" ? "wizard" : archetypeFromType("ai", sealed);
   } else if (convo.type === "network") {
     const sealed =
       backend || channel || convo.backend || convo.medium || "LinkedIn";
+    convo.model = undefined;
     convo.aiSubtype = undefined;
     convo.backend = sealed;
     convo.medium = sealed;
     convo.archetype = "network";
   } else {
     convo.type = "person";
-    const sealed =
-      backend || channel || convo.backend || convo.medium || "Discord";
+    convo.model = undefined;
     convo.aiSubtype = undefined;
-    convo.backend = sealed;
-    convo.medium = sealed;
+    convo.backend = "Open";
+    convo.medium = "Open";
     convo.archetype = "person";
   }
   return convo;
 }
 
-/** Human-readable type · channel label */
+/** Human-readable type · model/open label */
 export function sealedChannelLabel(focus) {
   const t = getFocusType(focus);
   const ch = getSealedChannel(focus);
-  if (t === "ai") return `AI · ${ch}`;
+  if (t === "ai") {
+    return ch === "Open" ? "AI · Open model" : `AI · ${ch}`;
+  }
   if (t === "network") return `Network · ${ch}`;
-  return `Person · ${ch}`;
+  return "Person · Open medium";
 }
 
 /** Seed focuses — each backend/medium is its own sealed Focus */

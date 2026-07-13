@@ -8,9 +8,6 @@
 
 import {
   ARCHETYPES,
-  AI_SUBTYPES,
-  NETWORK_PLATFORMS,
-  PERSON_CHANNELS,
   applyFocusClassification,
   focusExists,
   focusIdentityKey,
@@ -121,10 +118,9 @@ const els = {
   newForm: $("#new-convo-form"),
   newName: $("#new-entity-name"),
   newType: $("#new-entity-type"),
-  newAiSubtypeLabel: $("#new-ai-subtype-label"),
-  newAiSubtype: $("#new-entity-ai-subtype"),
-  newChannelLabel: $("#new-channel-label"),
-  newChannel: $("#new-entity-channel"),
+  newModelLabel: $("#new-model-label"),
+  newModel: $("#new-entity-model"),
+  newFocusHint: $("#new-focus-hint"),
   btnCancelNew: $("#btn-cancel-new"),
   toast: $("#toast"),
 };
@@ -380,27 +376,6 @@ function syncMediumFromControls(convo) {
 
 function typeLabel(convo) {
   return sealedChannelLabel(convo);
-}
-
-function fillNewChannelOptions(type, selected) {
-  const opts = type === "network" ? NETWORK_PLATFORMS : PERSON_CHANNELS;
-  const sel = els.newChannel;
-  if (!sel) return;
-  const label = type === "network" ? "Platform" : "Medium";
-  if (els.newChannelLabel) {
-    // Keep first text node as label
-    const textNodes = [...els.newChannelLabel.childNodes].filter(
-      (n) => n.nodeType === Node.TEXT_NODE
-    );
-    if (textNodes[0]) textNodes[0].textContent = `\n        ${label}\n        `;
-  }
-  sel.innerHTML = opts
-    .map(
-      (v) =>
-        `<option value="${escapeAttr(v)}"${v === selected ? " selected" : ""}>${escapeHtml(v)}</option>`
-    )
-    .join("");
-  if (selected) sel.value = selected;
 }
 
 /** Alignment *spell* exists in panel (cast already). */
@@ -1755,7 +1730,7 @@ function showNewFocusModal(opts = {}) {
 }
 
 /** Manual only: "+ New Focus" in sidebar. No mid-chat auto-discovery. */
-function openNewFocusModal({ name, archetype, medium, type, aiSubtype, channel } = {}) {
+function openNewFocusModal({ name, archetype, type, model } = {}) {
   if (!els.dialog || !els.newName) {
     console.warn("New Focus dialog missing from DOM");
     return;
@@ -1765,35 +1740,23 @@ function openNewFocusModal({ name, archetype, medium, type, aiSubtype, channel }
 
   let t = type;
   if (!t) {
-    if (archetype === "network") t = "network";
-    else if (archetype === "person") t = "person";
-    else if (archetype && ["wizard", "sage", "knight"].includes(archetype)) t = "ai";
-    else if (medium && AI_SUBTYPES[medium]) t = "ai";
-    else if (medium === "LinkedIn" && /network/i.test(name || "")) t = "network";
+    if (archetype === "person") t = "person";
+    else if (archetype && ["wizard", "sage", "knight", "healer"].includes(archetype)) t = "ai";
     else t = "person";
   }
+  // Create UI is person | ai only
+  if (t !== "ai") t = "person";
 
   if (els.newType) els.newType.value = t;
-  syncNewFocusModalFields();
-
-  if (t === "ai") {
-    const sub =
-      aiSubtype ||
-      (medium && AI_SUBTYPES[medium] ? medium : null) ||
-      "Hermes";
-    if (els.newAiSubtype) {
-      els.newAiSubtype.value = AI_SUBTYPES[sub] ? sub : "Hermes";
-    }
-  } else if (t === "network") {
-    fillNewChannelOptions("network", channel || medium || "LinkedIn");
-  } else {
-    fillNewChannelOptions("person", channel || medium || "Discord");
+  if (els.newModel) {
+    const m = model && model !== "Open" ? model : "none";
+    els.newModel.value = m;
   }
+  syncNewFocusFormChrome();
 
   try {
     els.dialog.showModal();
   } catch (err) {
-    // Fallback if already open or non-modal browsers
     if (typeof els.dialog.show === "function") els.dialog.show();
     else els.dialog.setAttribute("open", "");
   }
@@ -1801,20 +1764,15 @@ function openNewFocusModal({ name, archetype, medium, type, aiSubtype, channel }
   els.newName.select();
 }
 
-function syncNewFocusModalFields() {
+/** Show optional Model only for AI; person medium stays open by design. */
+function syncNewFocusFormChrome() {
   const t = els.newType?.value || "person";
-  if (t === "ai") {
-    if (els.newAiSubtypeLabel) els.newAiSubtypeLabel.hidden = false;
-    if (els.newChannelLabel) els.newChannelLabel.hidden = true;
-  } else {
-    if (els.newAiSubtypeLabel) els.newAiSubtypeLabel.hidden = true;
-    if (els.newChannelLabel) els.newChannelLabel.hidden = false;
-    // Update platform vs medium label
-    if (els.newChannelLabel) {
-      els.newChannelLabel.childNodes[0].textContent =
-        t === "network" ? "Platform\n        " : "Medium\n        ";
-    }
-    fillNewChannelOptions(t, els.newChannel?.value);
+  const isAi = t === "ai";
+  if (els.newModelLabel) els.newModelLabel.hidden = !isAi;
+  if (els.newFocusHint) {
+    els.newFocusHint.textContent = isAi
+      ? "AI: densen this node and craft curated words-as-magic. Model is optional — Hermes, Grok, Claude, Custom, or open. Medium of delivery is whatever surface you choose."
+      : "Person: densen who they are and craft message-spells for real life. Medium is open — Discord, text, in-person, anything.";
   }
 }
 
@@ -1876,21 +1834,8 @@ function detectChannelViolation(convo, userText) {
     }
   }
 
-  // Explicit "on <other backend>" while locked to a different AI channel
-  if (getFocusType(convo) === "ai") {
-    for (const be of Object.keys(AI_SUBTYPES)) {
-      if (be.toLowerCase() === currentChannel) continue;
-      if (
-        new RegExp(
-          `\\b(?:on|via|through|switch\\s+to|use)\\s+${escapeRegExp(be)}\\b`,
-          "i"
-        ).test(text)
-      ) {
-        return `${convo.name} · ${be}`;
-      }
-    }
-  }
-
+  // Explicit backend switching removed with simplified model.
+  // Current schema: one AI channel per Focus.
   return null;
 }
 
@@ -2853,23 +2798,18 @@ function markSent(id, { fromCopy = false } = {}) {
   );
 }
 
-function createConversation({ name, type, aiSubtype, channel, archetype, medium } = {}) {
-  let t = type;
-  if (!t) {
-    if (archetype === "person") t = "person";
-    else if (archetype === "network") t = "network";
-    else if (archetype) t = "ai";
-    else t = "person";
-  }
+function createConversation({ name, type, archetype, model } = {}) {
+  if (!name) return;
+  let t = type || archetype || "person";
+  if (t !== "ai") t = "person"; // create path is person | ai only
+  const rawModel = t === "ai" ? (model || "none") : "none";
+  const sealed = t === "ai"
+    ? (!rawModel || rawModel === "none" ? "Open" : rawModel)
+    : "Open";
 
-  const sealed =
-    t === "ai"
-      ? aiSubtype || medium || "Hermes"
-      : channel || medium || (t === "network" ? "LinkedIn" : "Discord");
-
-  // One Focus = one name + one sealed channel
+  // One Focus = one name + identity (model for AI, open for person)
   if (focusExists(state.conversations, name.trim(), sealed)) {
-    toast(`Focus already sealed: ${name.trim()} · ${sealed}`);
+    toast(`Focus already exists: ${name.trim()} · ${sealed}`);
     const existing = state.conversations.find(
       (c) =>
         focusIdentityKey(c.name, getSealedChannel(c)) ===
@@ -2890,10 +2830,11 @@ function createConversation({ name, type, aiSubtype, channel, archetype, medium 
 
   const messages = [];
   if (t === "ai") {
+    const modelLine = sealed === "Open" ? "Open model" : sealed;
     messages.push({
       id: uid("msg"),
       role: "grimoire",
-      text: `Sealed channel: **${name.trim()} · ${sealed}**. Hit **Cast Spell** for Alignment Reveal on this backend only.`,
+      text: `AI Focus sealed: **${name.trim()}** (${modelLine}). Speak about this intelligence. Hit **Cast Spell** for Alignment Reveal — then craft words-as-magic for whatever surface you deliver on.`,
       ts: Date.now(),
       kind: "alignment-directive",
     });
@@ -2901,7 +2842,7 @@ function createConversation({ name, type, aiSubtype, channel, archetype, medium 
     messages.push({
       id: uid("msg"),
       role: "grimoire",
-      text: `Sealed channel: **${name.trim()} · ${sealed}**. Speak about them — spells stay on this channel only.`,
+      text: `Person Focus sealed: **${name.trim()}**. Speak about them and yourself. Cast Spell crafts communication — medium is open (Discord, text, email, in-person, anything).`,
       ts: Date.now(),
     });
   }
@@ -2909,9 +2850,7 @@ function createConversation({ name, type, aiSubtype, channel, archetype, medium 
   const convo = {
     id,
     name: name.trim(),
-    archetype: archetype || "person",
-    medium: sealed,
-    backend: sealed,
+    archetype: t === "ai" ? "wizard" : "person",
     type: t,
     star: randomStarPosition(state.conversations),
     messages,
@@ -2919,9 +2858,7 @@ function createConversation({ name, type, aiSubtype, channel, archetype, medium 
 
   applyFocusClassification(convo, {
     type: t,
-    aiSubtype: t === "ai" ? sealed : undefined,
-    channel: t !== "ai" ? sealed : undefined,
-    backend: sealed,
+    model: t === "ai" ? rawModel : undefined,
   });
 
   // Strip any legacy auto-discovery suggestion messages from all focuses
@@ -2934,12 +2871,13 @@ function createConversation({ name, type, aiSubtype, channel, archetype, medium 
   persist();
   renderAll();
   // Auto-create Focus .md in GRIMOIRE-FocusIntelligence/
+  const sealLabel = getSealedChannel(convo);
   syncFocusIntelligenceFile(
     convo,
     "FOCUS_CREATED",
-    `Sealed channel: ${convo.name} · ${sealed}`
+    `Focus sealed: ${convo.name} · ${sealLabel}`
   );
-  toast(`Focus sealed: ${convo.name} · ${sealed}`);
+  toast(`Focus sealed: ${convo.name} · ${sealLabel}`);
 }
 
 // ─── Events ───
@@ -3018,7 +2956,7 @@ els.btnAttach?.addEventListener("click", () => {
 });
 
 els.newType?.addEventListener("change", () => {
-  syncNewFocusModalFields();
+  syncNewFocusFormChrome();
 });
 
 function toggleSpells() {
@@ -3142,18 +3080,9 @@ els.newForm?.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = (els.newName?.value || "").trim();
   if (!name) return;
-  const type = els.newType?.value || "person";
-  const sealed =
-    type === "ai"
-      ? els.newAiSubtype?.value || "Hermes"
-      : els.newChannel?.value || (type === "network" ? "LinkedIn" : "Discord");
-  createConversation({
-    name,
-    type,
-    aiSubtype: type === "ai" ? sealed : undefined,
-    channel: type !== "ai" ? sealed : undefined,
-    medium: sealed,
-  });
+  const type = els.newType?.value === "ai" ? "ai" : "person";
+  const model = type === "ai" ? (els.newModel?.value || "none") : "none";
+  createConversation({ name, type, model });
   els.dialog?.close();
 });
 

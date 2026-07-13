@@ -1210,6 +1210,14 @@ button {
   margin-top: -0.25rem;
 }
 
+.field-optional {
+  font-weight: 400;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .convo-badge {
   font-size: 0.65rem;
   min-width: 1.1rem;
