@@ -2366,6 +2366,7 @@ button {
     width: 0;
     min-width: 0;
     max-width: 0;
+    pointer-events: none;
   }
 
   .main {
