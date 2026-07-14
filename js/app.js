@@ -937,8 +937,8 @@ function renderSpells() {
   if (els.spellsHint) {
     els.spellsHint.textContent =
       view === "history"
-        ? "Cast History is sealed truth — forged, cast, and answered times. Double-tap ✕ only to prune sludge."
-        : "Copy seals the cast (sent + timestamp). Paste the reply into chat to densen, then Cast Spell for the next true priority.";
+        ? "Tap a card to copy · sealed history. Double-tap ✕ only to prune sludge."
+        : "Tap a spell card to copy (seals the cast). Paste the reply into chat to densen, then Cast Spell for the next true priority.";
   }
 
   if (els.btnClearAll) {
@@ -961,7 +961,7 @@ function renderSpells() {
   if (!list.length) {
     els.spellsList.innerHTML = `<div class="spells-empty">${
       view === "history"
-        ? "No cast history yet.<br/>Copy a READY spell — it drops here with timestamps."
+        ? "No cast history yet.<br/>Tap a READY spell card to copy — it drops here with timestamps."
         : isAiNode(convo) && !convoAlignmentUnlocked(convo)
           ? "Cast Spell for <strong>Alignment Reveal</strong>, or state intent in chat."
           : isAiNode(convo)
@@ -980,9 +980,13 @@ function renderSpells() {
       if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell) && !isCuriositySpell(spell)) {
         spell.kind = "self-cast";
       }
-      item.className = "spell-item spell-history" + (showSelf ? " spell-self-castable" : "");
+      item.className =
+        "spell-item spell-history spell-tap-copy" + (showSelf ? " spell-self-castable" : "");
       item.dataset.spellId = spell.id;
       if (showSelf) item.dataset.selfCast = "1";
+      item.setAttribute("role", "button");
+      item.setAttribute("tabindex", "0");
+      item.title = "Tap to copy spell";
       const md = formatSpellMarkdown(spell);
       const badgeText = spell.rebuilt ? "REFILLED" : escapeHtml(spell.status || "sent");
       const timeLine = [
@@ -1021,12 +1025,15 @@ function renderSpells() {
       spell.kind = "self-cast";
     }
     item.className =
-      "spell-item" +
+      "spell-item spell-tap-copy" +
       (isSent ? " spell-history" : "") +
       (mode === "primary" ? " spell-primary" : " spell-hold") +
       (showSelf ? " spell-self-castable" : "");
     item.dataset.spellId = spell.id;
     if (showSelf) item.dataset.selfCast = "1";
+    item.setAttribute("role", "button");
+    item.setAttribute("tabindex", "0");
+    item.title = "Tap to copy spell";
     const md = formatSpellMarkdown(spell);
     const badgeClass = isSent
       ? "status-badge sent"
@@ -1111,7 +1118,7 @@ function spellIndicatorsHtml(spell, { badgeClass, badgeText }) {
   }
   if (spellIsNodeBridge(spell)) {
     chips.push(
-      `<span class="status-badge status-bridge" title="AI node bridge — linked intelligence ties back to this Focus as nucleus">⟷ BRIDGE</span>`
+      `<span class="status-badge status-bridge" title="AI node bridge — linked intelligence ties back to this Focus as nucleus">BRIDGE</span>`
     );
   }
   chips.push(`<span class="${escapeHtml(badgeClass)}">${badgeText}</span>`);
@@ -1119,7 +1126,7 @@ function spellIndicatorsHtml(spell, { badgeClass, badgeText }) {
 }
 
 /**
- * Card header: title truncates; badges stay visible (fixes REFILLED overflow).
+ * Card header: title clamps cleanly; badges never leave the card.
  */
 function spellCardTopHtml(spell, convo, { badgeClass, badgeText }) {
   const title = String(spell.purpose || "untitled");
@@ -1172,15 +1179,15 @@ function shouldShowSelfCastButton(spell, convo) {
 }
 
 /**
- * Action row — SELF-CAST immediately before Copy (self-recursive only).
+ * Action row — card itself is tap-to-copy (no separate Copy button).
+ * Optional SELF-CAST + View only.
  */
 function spellActionsHtml(spell, convo, { isSent }) {
   const self = shouldShowSelfCastButton(spell, convo);
-  // Fixed order: SELF-CAST (optional) → Copy → View
   const selfBtn = self
     ? `<button type="button" class="btn-spell self-cast" data-action="self-cast" title="Enter this spell into the current Focus chat automatically — no copy/paste" aria-label="SELF-CAST into Focus chat">SELF-CAST</button>`
     : "";
-  return `<div class="spell-actions${self ? " has-self-cast" : ""}">${selfBtn}<button type="button" class="btn-spell copy" data-action="copy">${isSent ? "Copy again" : "Copy"}</button><button type="button" class="btn-spell expand" data-action="expand">View</button></div>`;
+  return `<div class="spell-actions${self ? " has-self-cast" : ""}">${selfBtn}<button type="button" class="btn-spell expand" data-action="expand">View</button><span class="spell-tap-hint" aria-hidden="true">tap card to copy</span></div>`;
 }
 
 function wireSpellCardActions(item, spell, { sealOnCopy }) {
@@ -1192,10 +1199,8 @@ function wireSpellCardActions(item, spell, { sealOnCopy }) {
       selfCastSpell(spell.id);
     });
   }
-  item.querySelector('[data-action="copy"]')?.addEventListener("click", () =>
-    copySpell(spell.id, { seal: sealOnCopy })
-  );
-  item.querySelector('[data-action="expand"]')?.addEventListener("click", () => {
+  item.querySelector('[data-action="expand"]')?.addEventListener("click", (e) => {
+    e.stopPropagation();
     item.classList.toggle("expanded");
     const btn = item.querySelector('[data-action="expand"]');
     if (btn) btn.textContent = item.classList.contains("expanded") ? "Hide" : "View";
@@ -1203,6 +1208,29 @@ function wireSpellCardActions(item, spell, { sealOnCopy }) {
   item.querySelector('[data-action="delete"]')?.addEventListener("click", (e) => {
     e.stopPropagation();
     requestDeleteSpell(spell.id, e.currentTarget);
+  });
+
+  // Whole card = tap-to-copy (except control buttons)
+  const doCopy = async (e) => {
+    if (e.target.closest("button, a, input, textarea, .spell-full")) return;
+    e.preventDefault();
+    item.classList.add("spell-copied-flash");
+    setTimeout(() => item.classList.remove("spell-copied-flash"), 420);
+    try {
+      await copySpell(spell.id, { seal: sealOnCopy });
+    } catch {
+      /* clipboard failure already handled inside copySpell */
+    }
+  };
+  item.addEventListener("click", (e) => {
+    void doCopy(e);
+  });
+  item.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      if (e.target.closest("button")) return;
+      e.preventDefault();
+      void doCopy(e);
+    }
   });
 }
 
@@ -3749,8 +3777,8 @@ function castSpell() {
     id: uid("msg"),
     role: "grimoire",
     text: isAlignmentSpell(spell)
-      ? `**Intel consolidated.** Alignment Reveal ready for **${convo.name} · ${medium}**. Open Spells → Copy → send via ${medium} → paste full reply here to ignite the universe.${purgeNote}`
-      : `**Intel consolidated · spells restructured.** Ready: **${spell.purpose}.**${craft}${dirN ? ` Locked to **${dirN}** directives.` : ""}${personHint}${purgeNote} Open Spells panel. ★ HUD = Intel Atlas.`,
+      ? `**Intel consolidated.** Alignment Reveal ready for **${convo.name} · ${medium}**. Open Spells → **tap the card to copy** → send via ${medium} → paste full reply here to ignite the universe.${purgeNote}`
+      : `**Intel consolidated · spells restructured.** Ready: **${spell.purpose}.**${craft}${dirN ? ` Locked to **${dirN}** directives.` : ""}${personHint}${purgeNote} Open Spells → **tap card to copy**. ★ HUD = Intel Atlas.`,
     ts: Date.now(),
   });
 
