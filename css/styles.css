@@ -2362,6 +2362,23 @@ button {
   background: rgba(96, 165, 250, 0.12);
 }
 
+/* SELF-CAST — green sovereign inject into Focus chat */
+.btn-spell.self-cast {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.5);
+  background: rgba(52, 211, 153, 0.1);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.15);
+}
+
+.btn-spell.self-cast:hover {
+  color: #6ee7b7;
+  background: rgba(52, 211, 153, 0.2);
+  border-color: rgba(52, 211, 153, 0.7);
+  box-shadow: 0 0 16px rgba(52, 211, 153, 0.25);
+}
+
 .btn-spell.mark-sent {
   color: var(--sent);
   border-color: rgba(52, 211, 153, 0.3);

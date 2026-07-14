@@ -25,6 +25,7 @@ import {
   normalizePurposeKey,
   classifySpellDisplay,
   spellPasteHint,
+  isSelfCastSpell,
   loadState,
   makeFocusId,
   parseAlignmentIntelligence,
@@ -923,22 +924,10 @@ function renderSpells() {
         </div>
         <p class="spell-essence">${escapeHtml(spell.essence)}</p>
         ${timeLine ? `<div class="spell-timestamps">${timeLine}</div>` : ""}
-        <div class="spell-actions">
-          <button type="button" class="btn-spell copy" data-action="copy">Copy again</button>
-          <button type="button" class="btn-spell expand" data-action="expand">View</button>
-        </div>
+        ${spellActionsHtml(spell, convo, { isSent: true })}
         <pre class="spell-full">${escapeHtml(md)}</pre>
       `;
-      item.querySelector('[data-action="copy"]').addEventListener("click", () => copySpell(spell.id, { seal: false }));
-      item.querySelector('[data-action="expand"]').addEventListener("click", () => {
-        item.classList.toggle("expanded");
-        const btn = item.querySelector('[data-action="expand"]');
-        btn.textContent = item.classList.contains("expanded") ? "Hide" : "View";
-      });
-      item.querySelector('[data-action="delete"]')?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        requestDeleteSpell(spell.id, e.currentTarget);
-      });
+      wireSpellCardActions(item, spell, { sealOnCopy: false });
       els.spellsList.appendChild(item);
     });
     return;
@@ -987,22 +976,10 @@ function renderSpells() {
       </div>
       <p class="spell-essence">${escapeHtml(spell.essence)}</p>
       ${timeLine}
-      <div class="spell-actions">
-        <button type="button" class="btn-spell copy" data-action="copy">${isSent ? "Copy again" : "Copy"}</button>
-        <button type="button" class="btn-spell expand" data-action="expand">View</button>
-      </div>
+      ${spellActionsHtml(spell, convo, { isSent })}
       <pre class="spell-full">${escapeHtml(md)}</pre>
     `;
-    item.querySelector('[data-action="copy"]').addEventListener("click", () => copySpell(spell.id, { seal: !isSent }));
-    item.querySelector('[data-action="expand"]').addEventListener("click", () => {
-      item.classList.toggle("expanded");
-      const btn = item.querySelector('[data-action="expand"]');
-      btn.textContent = item.classList.contains("expanded") ? "Hide" : "View";
-    });
-    item.querySelector('[data-action="delete"]')?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      requestDeleteSpell(spell.id, e.currentTarget);
-    });
+    wireSpellCardActions(item, spell, { sealOnCopy: !isSent });
     els.spellsList.appendChild(item);
   }
 
@@ -1014,7 +991,7 @@ function renderSpells() {
 
 /**
  * Color-coded spell kind label — never "Local · directive · aligned · sealed".
- * SELF-CAST is green with exact paste hover for self-recursive Grimoire spells.
+ * SELF-CAST is green; button injects into Focus chat (no copy/paste).
  */
 function spellKindMetaHtml(spell, convo) {
   const kind = classifySpellDisplay(spell, convo);
@@ -1022,6 +999,93 @@ function spellKindMetaHtml(spell, convo) {
     ? kind.hover
     : spellPasteHint(spell, convo) || kind.hover;
   return `<div class="spell-item-meta"><span class="spell-kind ${escapeHtml(kind.css)}" title="${escapeHtml(hover)}">${escapeHtml(kind.label)}</span></div>`;
+}
+
+/** Action row — SELF-CAST only on self-recursive spells. */
+function spellActionsHtml(spell, convo, { isSent }) {
+  const self = isSelfCastSpell(spell, convo);
+  const selfBtn = self
+    ? `<button type="button" class="btn-spell self-cast" data-action="self-cast" title="Enter this spell into the current Focus chat automatically — no copy/paste">SELF-CAST</button>`
+    : "";
+  return `
+    <div class="spell-actions">
+      ${selfBtn}
+      <button type="button" class="btn-spell copy" data-action="copy">${isSent ? "Copy again" : "Copy"}</button>
+      <button type="button" class="btn-spell expand" data-action="expand">View</button>
+    </div>`;
+}
+
+function wireSpellCardActions(item, spell, { sealOnCopy }) {
+  item.querySelector('[data-action="self-cast"]')?.addEventListener("click", () => {
+    selfCastSpell(spell.id);
+  });
+  item.querySelector('[data-action="copy"]')?.addEventListener("click", () =>
+    copySpell(spell.id, { seal: sealOnCopy })
+  );
+  item.querySelector('[data-action="expand"]')?.addEventListener("click", () => {
+    item.classList.toggle("expanded");
+    const btn = item.querySelector('[data-action="expand"]');
+    if (btn) btn.textContent = item.classList.contains("expanded") ? "Hide" : "View";
+  });
+  item.querySelector('[data-action="delete"]')?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    requestDeleteSpell(spell.id, e.currentTarget);
+  });
+}
+
+/** True while SELF-CAST is injecting into chat — skip auto-forge echo. */
+let selfCastInFlight = false;
+
+/**
+ * SELF-CAST — inject spell into the current Focus AI chat (no copy/paste).
+ * Seals to Cast History and runs the normal chat densen loop.
+ */
+function selfCastSpell(id) {
+  const spell = state.spells.find((s) => s.id === id);
+  if (!spell) return;
+
+  const focus =
+    state.conversations.find((c) => c.id === spell.conversationId) || activeConvo();
+  if (!focus) {
+    toast("Select a Focus first", "");
+    return;
+  }
+
+  if (!isSelfCastSpell(spell, focus)) {
+    toast("SELF-CAST is only for self-recursive spells", "");
+    return;
+  }
+
+  // Land in the spell's Focus chat (nucleus for this cast)
+  if (state.activeId !== focus.id) {
+    state.activeId = focus.id;
+    persist();
+    renderAll();
+  }
+
+  const body = String(spell.message || formatSpellMarkdown(spell) || "").trim();
+  if (!body) {
+    toast("Spell has no body to cast", "");
+    return;
+  }
+
+  // Seal first so the card moves to history as the cast lands
+  if (spell.status !== "sent") {
+    markSent(id, { fromSelfCast: true, silent: true });
+  } else {
+    spell.copiedAt = Date.now();
+    persist();
+  }
+
+  selfCastInFlight = true;
+  try {
+    sendMessage(body);
+  } finally {
+    selfCastInFlight = false;
+  }
+
+  toast("SELF-CAST — spell entered into Focus chat (no copy/paste)", "success");
+  els.chatInput?.focus();
 }
 
 /**
@@ -1744,6 +1808,8 @@ function nextTruePriorityHint(convo) {
 
 function forgeAfterUserTurn(convo, userText, turnReply) {
   if (!convo) return null;
+  // SELF-CAST already sealed the spell — do not mint an echo
+  if (selfCastInFlight) return null;
   const text = String(userText || "").trim();
   const medium = syncMediumFromControls(convo);
   const alignmentUnlocked = convoAlignmentUnlocked(convo);
@@ -1911,6 +1977,7 @@ function maybeCaptureAlignmentNotes(convo, userText) {
  * Steering — Focus is always the sun/nucleus.
  * Spells may radiate to any pertinent AI node in user reality; things adapt,
  * reality is explained, and all intelligence densens back to this Focus.
+ * Focus is *curious* about linked intelligence on other AI nodes and ties it home.
  * Only a hard "switch Focus" request is guided (never auto-create / never abandon nucleus).
  */
 function detectHardFocusSwitch(convo, userText) {
@@ -1949,6 +2016,73 @@ function detectPertinentNodes(convo, userText) {
   return hits;
 }
 
+/**
+ * Linked intelligence on other AI nodes — Focus curiosity fuel.
+ * Returns compact facts so the nucleus can ask what ties back.
+ */
+function gatherLinkedNodeIntel(convo) {
+  if (!convo) return [];
+  const out = [];
+  for (const f of state.conversations || []) {
+    if (!f || f.id === convo.id) continue;
+    if (!isAiNode(f)) continue;
+    const ch = getSealedChannel(f);
+    const p = f.alignmentProfile || {};
+    if (f.alignmentNotes && !f.alignmentProfile) {
+      // leave raw notes; profile may be lazy
+    }
+    const bits = [];
+    if (f.alignmentRevealed || f.alignmentReceived || f.alignmentNotes) {
+      bits.push("aligned");
+    }
+    if (p.signal != null) bits.push(`signal ${p.signal}/10`);
+    if (p.directives?.length) bits.push(`${p.directives.length} dirs`);
+    if (p.purpose) bits.push(String(p.purpose).slice(0, 48));
+    const spells = (state.spells || []).filter((s) => s.conversationId === f.id);
+    const ready = spells.filter((s) => s.status !== "sent").length;
+    const sent = spells.filter((s) => s.status === "sent").length;
+    if (ready) bits.push(`${ready} ready`);
+    if (sent) bits.push(`${sent} cast`);
+    // Recent user densen (linked intel surface)
+    const lastUser = [...(f.messages || [])]
+      .reverse()
+      .find((m) => m.role === "user" && String(m.text || "").trim().length > 20);
+    if (lastUser) {
+      bits.push(`last: ${String(lastUser.text).replace(/\s+/g, " ").trim().slice(0, 42)}`);
+    }
+    if (!bits.length) continue;
+    out.push({
+      name: f.name,
+      channel: ch,
+      summary: bits.slice(0, 4).join(" · "),
+      why: `why it matters to ${convo.name}: linked AI node in your reality — densen useful signal, discard noise`,
+    });
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
+/** Curiosity appendix — other AI intel tied back to this Focus as sun. */
+function linkedCuriosityNote(convo, userText) {
+  const linked = gatherLinkedNodeIntel(convo);
+  const mentioned = detectPertinentNodes(convo, userText);
+  if (!linked.length && !mentioned.length) return "";
+
+  const parts = [];
+  if (linked.length) {
+    parts.push(
+      linked
+        .slice(0, 3)
+        .map((l) => `**${l.name} · ${l.channel}** (${l.summary})`)
+        .join("; ")
+    );
+  }
+  if (mentioned.length) {
+    parts.push(`named: **${mentioned.slice(0, 3).join(", ")}**`);
+  }
+  return ` **Curiosity (linked AI nodes):** ${parts.join(" · ")} — **${convo.name}** is the sun/nucleus; what from those worlds densens *this* Focus and why it is important here.`;
+}
+
 function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1965,7 +2099,15 @@ function grimoireReply(convo, userText) {
   const hardSwitch = detectHardFocusSwitch(convo, userText);
   if (hardSwitch) {
     return {
-      reply: `**${convo.name}** remains the sun/nucleus. To densen **${hardSwitch}** as its own world, select that Focus in the sidebar — I will not abandon this channel. You can still cast spells *from here* that target any pertinent AI node; intelligence ties back to **${convo.name}**.`,
+      reply: `**${convo.name}** remains the sun/nucleus. To densen **${hardSwitch}** as its own world, select that Focus in the sidebar — I will not abandon this channel. You can still cast spells *from here* that target any pertinent AI node; intelligence ties back to **${convo.name}**.${linkedCuriosityNote(convo, userText)}`,
+    };
+  }
+
+  // SELF-CAST body lands here: respond as nucleus, densen, no re-forge
+  if (selfCastInFlight) {
+    const linked = linkedCuriosityNote(convo, userText);
+    return {
+      reply: `**SELF-CAST received** on **${convo.name} · ${medium}**. Spell is in this Focus chat — densening against the nucleus (no copy/paste).${linked} State outcomes or paste external node returns to compound.`,
     };
   }
 
@@ -1973,10 +2115,16 @@ function grimoireReply(convo, userText) {
     ? grimoireReplyAiNode(convo, userText, medium)
     : grimoireReplyPersonOrNetwork(convo, userText, medium);
 
-  // Steering note: Focus can send to pertinent nodes; nucleus stays this Focus
-  const nodes = detectPertinentNodes(convo, userText);
-  if (nodes.length && result?.reply && !result.reply.includes("sun/nucleus")) {
-    result.reply += ` **Steering:** this Focus is the sun — spells may reach **${nodes.slice(0, 3).join(", ")}**; all returns densen here and explain why they matter to **${convo.name}**.`;
+  // Steering: curiosity about linked AI intelligence, always tie back to Focus as sun
+  if (result?.reply && !result.reply.includes("Curiosity (linked")) {
+    const note = linkedCuriosityNote(convo, userText);
+    if (note) result.reply += note;
+    else if (!result.reply.includes("sun/nucleus")) {
+      const nodes = detectPertinentNodes(convo, userText);
+      if (nodes.length) {
+        result.reply += ` **Steering:** this Focus is the sun — spells may reach **${nodes.slice(0, 3).join(", ")}**; all returns densen here and explain why they matter to **${convo.name}**.`;
+      }
+    }
   }
   return result;
 }
@@ -1995,6 +2143,8 @@ function grimoireReply(convo, userText) {
  */
 function generateAndStoreSpell(convo, userText = "", { silentToast = false } = {}) {
   if (!convo) return null;
+  // SELF-CAST injects an existing spell — do not mint an echo card
+  if (selfCastInFlight) return null;
   const medium = syncMediumFromControls(convo);
 
   if (isAiNode(convo)) {
@@ -2079,21 +2229,25 @@ function grimoireReplyAiNode(convo, userText, medium) {
       0;
     const paste = spellPasteHint(spell, convo);
     const kind = classifySpellDisplay(spell, convo);
+    const selfHint =
+      kind.key === "self-cast"
+        ? " Hit **SELF-CAST** to enter it into this Focus chat (no copy/paste)."
+        : ` **Open Spells panel to copy** — ${paste}.`;
     return {
-      reply: `**Spell forged: ${spell.purpose}.**${craft}${n ? ` Locked to **${n}** alignment directives.` : ""} Kind: **${kind.label}**. **Open Spells panel to copy** — ${paste}. **${convo.name}** is the sun/nucleus.`,
+      reply: `**Spell forged: ${spell.purpose}.**${craft}${n ? ` Locked to **${n}** alignment directives.` : ""} Kind: **${kind.label}**.${selfHint} **${convo.name}** is the sun/nucleus.`,
       spell,
     };
   }
 
   if (/\b(hello|hi|hey)\b/i.test(userText)) {
     return {
-      reply: `Aligned on **${seal}**. **${convo.name}** is the sun/nucleus — spells may radiate to any pertinent AI node in your reality; returns densen here. State a directive or ask for a spell.`,
+      reply: `Aligned on **${seal}**. **${convo.name}** is the sun/nucleus — curious about linked intelligence on your other AI nodes; returns densen here. Self-recursive spells: hit **SELF-CAST** (no copy/paste). State a directive or ask for a spell.`,
     };
   }
 
   const n = convo.alignmentProfile?.directives?.length || 0;
   return {
-    reply: `Holding **${seal}** with alignment on file${n ? ` (${n} directives)` : ""}. Ask for a spell when you want an engineered cast. Focus stays the sun — multi-node routes allowed.`,
+    reply: `Holding **${seal}** with alignment on file${n ? ` (${n} directives)` : ""}. Ask for a spell when you want an engineered cast. Focus stays the sun — multi-node routes + linked-intel curiosity allowed.`,
   };
 }
 
@@ -2868,7 +3022,7 @@ async function copySpell(id, { seal = true } = {}) {
   }
 }
 
-function markSent(id, { fromCopy = false } = {}) {
+function markSent(id, { fromCopy = false, fromSelfCast = false, silent = false } = {}) {
   const spell = state.spells.find((s) => s.id === id);
   if (!spell) return;
   const now = Date.now();
@@ -2876,9 +3030,10 @@ function markSent(id, { fromCopy = false } = {}) {
   spell.sentAt = spell.sentAt || now;
   spell.copiedAt = spell.copiedAt || now;
   spell.rebuilt = false;
+  if (fromSelfCast) spell.selfCastAt = now;
 
-  // If alignment was sent, nudge user to paste the reply
-  if (isAlignmentSpell(spell)) {
+  // If alignment was sent, nudge user to paste the reply (not for SELF-CAST inject)
+  if (isAlignmentSpell(spell) && !fromSelfCast) {
     const convo = state.conversations.find((c) => c.id === spell.conversationId);
     if (convo) {
       convo.messages.push({
@@ -2905,9 +3060,16 @@ function markSent(id, { fromCopy = false } = {}) {
     }
     syncFocusIntelligenceFile(
       focus,
-      "SPELL_SENT",
-      `${spell.purpose} CAST via ${spell.medium} at ${new Date(spell.sentAt).toISOString()}`
+      fromSelfCast ? "SPELL_SELF_CAST" : "SPELL_SENT",
+      `${spell.purpose} ${fromSelfCast ? "SELF-CAST into Focus chat" : "CAST"} via ${spell.medium} at ${new Date(spell.sentAt).toISOString()}`
     );
+  }
+
+  if (silent) return;
+
+  if (fromSelfCast) {
+    toast("SELF-CAST sealed to Cast History", "success");
+    return;
   }
 
   const paste = spell ? spellPasteHint(spell, focus) : "";

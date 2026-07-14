@@ -1541,7 +1541,7 @@ export const SPELL_KIND_DISPLAY = {
     label: "SELF-CAST",
     css: "spell-kind-self-cast",
     hover:
-      "copy and paste the spell to the grimoire apps focus you currently have open",
+      "SELF-CAST enters this spell into the Focus chat automatically — no copy/paste",
   },
   healer: {
     key: "healer",
