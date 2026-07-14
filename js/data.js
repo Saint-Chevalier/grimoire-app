@@ -1036,7 +1036,7 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
   // AI + unlocked alignment → full engineered spell (not a receipt)
   if (focusType === "ai" && unlocked && profile) {
     const eng = engineerSpellFromAlignment(conversation, med, context, profile);
-    return {
+    const draft = {
       id: makeSpellId(conversation.id),
       conversationId: conversation.id,
       target,
@@ -1048,10 +1048,18 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
       message: eng.message,
       status: "ready",
       createdAt: Date.now(),
-      kind: "directive",
+      kind: isSelfRecursiveFocus(conversation) ? "self-cast" : "directive",
       engineeredFromAlignment: true,
       alignmentDirectives: profile.directives || [],
     };
+    // Refine kind from body (healer / self-check / propagate / machine)
+    const display = classifySpellDisplay(draft, conversation);
+    if (display.key !== "directive" && display.key !== "self-cast") {
+      draft.kind = display.key;
+    } else if (display.key === "self-cast") {
+      draft.kind = "self-cast";
+    }
+    return draft;
   }
 
   const aligned = Boolean(alignment) && focusType === "ai";
@@ -1082,7 +1090,7 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
     craft,
   });
 
-  return {
+  const draft = {
     id: makeSpellId(conversation.id),
     conversationId: conversation.id,
     target,
@@ -1094,9 +1102,19 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
     message,
     status: "ready",
     createdAt: Date.now(),
-    kind: "standard",
+    kind: isSelfRecursiveFocus(conversation)
+      ? "self-cast"
+      : focusType === "person"
+        ? "message"
+        : focusType === "network"
+          ? "propagate"
+          : "standard",
     engineeredFromAlignment: aligned && unlocked,
   };
+  const display = classifySpellDisplay(draft, conversation);
+  if (display?.key) draft.kind = display.key === "directive" ? draft.kind : display.key;
+  if (draft.kind === "standard") draft.kind = "directive";
+  return draft;
 }
 
 /** Pull recent user text that looks like a pasted node reveal. */
@@ -1509,7 +1527,188 @@ export function spellKindKey(spell) {
   if (isAlignmentSpell(spell) || spell.kind === "alignment") return "alignment";
   const k = String(spell.kind || "standard").toLowerCase().trim();
   if (k === "reveal") return "alignment";
+  if (k === "self-cast" || k === "self-recursive") return "self-cast";
   return k || "standard";
+}
+
+/**
+ * Sovereign spell-kind taxonomy for Cast History display.
+ * Kinds: self-cast · healer · self-check · propagate · machine · alignment · directive · message
+ */
+export const SPELL_KIND_DISPLAY = {
+  "self-cast": {
+    key: "self-cast",
+    label: "SELF-CAST",
+    css: "spell-kind-self-cast",
+    hover:
+      "copy and paste the spell to the grimoire apps focus you currently have open",
+  },
+  healer: {
+    key: "healer",
+    label: "HEALER",
+    css: "spell-kind-healer",
+    hover: "Integrity / restore spell — copy and paste to the Healer (or health) surface you currently have open",
+  },
+  "self-check": {
+    key: "self-check",
+    label: "SELF-CHECK",
+    css: "spell-kind-self-check",
+    hover: "Self-checking audit — copy and paste to the Focus you currently have open, then verify the reply",
+  },
+  propagate: {
+    key: "propagate",
+    label: "PROPAGATE",
+    css: "spell-kind-propagate",
+    hover: "Propagating signal — copy and paste to the network / AI node this Focus is steering",
+  },
+  machine: {
+    key: "machine",
+    label: "MACHINE",
+    css: "spell-kind-machine",
+    hover: "Writes to machine (vault / disk / local store) — copy and paste into the Focus you currently have open",
+  },
+  alignment: {
+    key: "alignment",
+    label: "ALIGNMENT",
+    css: "spell-kind-alignment",
+    hover: "Alignment Reveal — copy and paste to the AI node, then paste their full reply back into this Focus",
+  },
+  directive: {
+    key: "directive",
+    label: "DIRECTIVE",
+    css: "spell-kind-directive",
+    hover: "Engineered directive — copy and paste to the target node this Focus is densening",
+  },
+  message: {
+    key: "message",
+    label: "MESSAGE",
+    css: "spell-kind-message",
+    hover: "Human / network message — copy and paste to the person or surface you currently have open",
+  },
+};
+
+function corpusOfSpell(spell) {
+  return [
+    spell?.purpose,
+    spell?.essence,
+    spell?.crafted,
+    spell?.message,
+    spell?.kind,
+    spell?.target,
+    spell?.medium,
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+}
+
+/** True when this Focus / spell is the living Grimoire self-loop (Local · GRIMOIRE). */
+export function isSelfRecursiveFocus(convo) {
+  if (!convo) return false;
+  const name = String(convo.name || "").toLowerCase();
+  const ch = String(getSealedChannel(convo) || "").toLowerCase();
+  const id = String(convo.id || "").toLowerCase();
+  return (
+    /\bgrimoire\b/.test(name) ||
+    id.includes("grimoire") ||
+    (ch === "local" && /grimoire|book|self/.test(name))
+  );
+}
+
+export function isSelfCastSpell(spell, convo) {
+  if (!spell) return false;
+  const k = String(spell.kind || "").toLowerCase();
+  if (k === "self-cast" || k === "self-recursive") return true;
+  if (isSelfRecursiveFocus(convo)) return true;
+  const target = String(spell.target || "").toLowerCase();
+  const medium = String(spell.medium || "").toLowerCase();
+  const body = corpusOfSpell(spell);
+  if (/\bgrimoire\b/.test(target) && (medium === "local" || medium === "open")) return true;
+  if (
+    /self-recursive|self.?cast|you are the grimoire app|grimoire_focus|grimoire_spell_display|grimoire_focus_ui/i.test(
+      body
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Classify a spell for color-coded Cast History labels.
+ * @returns {{ key: string, label: string, css: string, hover: string }}
+ */
+export function classifySpellDisplay(spell, convo) {
+  if (!spell) return SPELL_KIND_DISPLAY.directive;
+
+  if (isSelfCastSpell(spell, convo)) {
+    return SPELL_KIND_DISPLAY["self-cast"];
+  }
+  if (isAlignmentSpell(spell) || spell.kind === "alignment") {
+    return SPELL_KIND_DISPLAY.alignment;
+  }
+
+  const arch = String(convo?.archetype || "").toLowerCase();
+  const focusType = convo ? getFocusType(convo) : "ai";
+  const body = corpusOfSpell(spell);
+  const explicit = String(spell.kind || "").toLowerCase().trim();
+
+  if (
+    explicit === "healer" ||
+    arch === "healer" ||
+    /\b(healer|health covenant|integrity scan|integrity directive|restore health)\b/.test(body)
+  ) {
+    return SPELL_KIND_DISPLAY.healer;
+  }
+  if (
+    explicit === "self-check" ||
+    explicit === "self-checking" ||
+    /\b(self-?check|self-?checking|audit|verify|verification|decay checklist|pass\s*\/\s*fail|evidence chain|readback)\b/.test(
+      body
+    )
+  ) {
+    return SPELL_KIND_DISPLAY["self-check"];
+  }
+  if (
+    explicit === "machine" ||
+    explicit === "write-machine" ||
+    /\b(write to (disk|machine|vault|local)|intelligence vault|focusintelligence|localstorage|mutation prevention|disk write|on disk)\b/.test(
+      body
+    )
+  ) {
+    return SPELL_KIND_DISPLAY.machine;
+  }
+  if (
+    explicit === "propagate" ||
+    explicit === "propagating" ||
+    focusType === "network" ||
+    /\b(propagat|broadcast|spread|network field|public-safe|shareable|clone|self-propagat)\b/.test(
+      body
+    )
+  ) {
+    return SPELL_KIND_DISPLAY.propagate;
+  }
+  if (explicit === "message" || focusType === "person") {
+    return SPELL_KIND_DISPLAY.message;
+  }
+  return SPELL_KIND_DISPLAY.directive;
+}
+
+/** Paste-destination line for UI (never the old medium · kind · sealed string). */
+export function spellPasteHint(spell, convo) {
+  const kind = classifySpellDisplay(spell, convo);
+  if (kind.key === "self-cast") {
+    return kind.hover;
+  }
+  const focusName = (convo?.name || spell?.target || "this Focus").trim();
+  const target = (spell?.target || focusName).trim();
+  if (kind.key === "alignment") {
+    return `copy and paste this spell to ${target}, then paste their reply back into the ${focusName} focus you currently have open`;
+  }
+  if (target && target.toLowerCase() !== focusName.toLowerCase()) {
+    return `copy and paste this spell to ${target} — intelligence densens back to the ${focusName} focus (sun/nucleus) you currently have open`;
+  }
+  return `copy and paste this spell to the ${focusName} focus you currently have open`;
 }
 
 export function normalizePurposeKey(p) {

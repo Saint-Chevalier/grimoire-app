@@ -21,9 +21,10 @@ import {
   isAlignmentSpell,
   isReceiptSpell,
   dedupeSpells,
-  spellKindKey,
   spellsAreSameKindPurpose,
   normalizePurposeKey,
+  classifySpellDisplay,
+  spellPasteHint,
   loadState,
   makeFocusId,
   parseAlignmentIntelligence,
@@ -524,9 +525,48 @@ async function deleteFocus(focusId) {
     console.warn("Could not remove intelligence file", err);
   }
 
+  // Purge Focus references from saved browser state
+  purgeFocusFromStorage(focusId, focus);
+
   persist();
   renderAll();
-  toast(`Focus deleted: ${label}`, "success");
+  toast(`Focus purged: ${label}`, "success");
+}
+
+/** Remove all cached traces of a Focus from localStorage/vault state. */
+function purgeFocusFromStorage(focusId, focus) {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object") return;
+
+    const id = String(focusId || "").trim();
+    if (!id) return;
+
+    let changed = false;
+    if (Array.isArray(data.conversations)) {
+      const before = data.conversations.length;
+      data.conversations = data.conversations.filter((c) => String(c?.id || "").trim() !== id);
+      changed = changed || data.conversations.length !== before;
+    }
+    if (Array.isArray(data.spells)) {
+      const before = data.spells.length;
+      data.spells = data.spells.filter((s) => String(s?.conversationId || "").trim() !== id);
+      changed = changed || data.spells.length !== before;
+    }
+    if (data.activeId === focusId) {
+      data.activeId = (data.conversations && data.conversations[0]?.id) || null;
+      changed = true;
+    }
+    if (changed) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+  } catch {
+    // ignore quota/parse errors
+  }
+
+  // Vault file cleanup is already attempted above; keep silent on missing files.
 }
 
 // ─── Render: chat ───
@@ -856,12 +896,65 @@ function renderSpells() {
   }
 
   els.spellsList.innerHTML = "";
-  list.forEach((spell) => {
+  if (view === "history") {
+    list.forEach((spell) => {
+      const item = document.createElement("article");
+      item.className = "spell-item spell-history";
+      item.dataset.spellId = spell.id;
+      const md = formatSpellMarkdown(spell);
+      const badgeText = spell.rebuilt ? "REFILLED" : escapeHtml(spell.status || "sent");
+      const timeLine = [
+        spell.createdAt ? `forged ${formatSpellTime(spell.createdAt)}` : "",
+        spell.copiedAt ? `copied ${formatSpellTime(spell.copiedAt)}` : "",
+        spell.sentAt ? `cast ${formatSpellTime(spell.sentAt)}` : "",
+        spell.answeredAt ? `answered ${formatSpellTime(spell.answeredAt)}` : "",
+      ]
+        .filter(Boolean)
+        .map(escapeHtml)
+        .join(" · ");
+      item.innerHTML = `
+        <button type="button" class="delete-btn" data-action="delete" title="Prune from history (two-tap)">✕</button>
+        <div class="spell-item-top">
+          <div>
+            <div class="spell-item-title">${escapeHtml(spell.purpose)}</div>
+            ${spellKindMetaHtml(spell, convo)}
+          </div>
+          <span class="status-badge sent">${badgeText}</span>
+        </div>
+        <p class="spell-essence">${escapeHtml(spell.essence)}</p>
+        ${timeLine ? `<div class="spell-timestamps">${timeLine}</div>` : ""}
+        <div class="spell-actions">
+          <button type="button" class="btn-spell copy" data-action="copy">Copy again</button>
+          <button type="button" class="btn-spell expand" data-action="expand">View</button>
+        </div>
+        <pre class="spell-full">${escapeHtml(md)}</pre>
+      `;
+      item.querySelector('[data-action="copy"]').addEventListener("click", () => copySpell(spell.id, { seal: false }));
+      item.querySelector('[data-action="expand"]').addEventListener("click", () => {
+        item.classList.toggle("expanded");
+        const btn = item.querySelector('[data-action="expand"]');
+        btn.textContent = item.classList.contains("expanded") ? "Hide" : "View";
+      });
+      item.querySelector('[data-action="delete"]')?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        requestDeleteSpell(spell.id, e.currentTarget);
+      });
+      els.spellsList.appendChild(item);
+    });
+    return;
+  }
+
+  // Active view = priority ladder
+  const primary = readyList[0];
+  const rest = readyList.slice(1);
+  els.spellsList.innerHTML = "";
+
+  function appendSpellCard(spell, mode) {
     const item = document.createElement("article");
-    item.className = "spell-item" + (spell.status === "sent" ? " spell-history" : "");
+    const isSent = spell.status === "sent";
+    item.className = "spell-item" + (isSent ? " spell-history" : "") + (mode === "primary" ? " spell-primary" : " spell-hold");
     item.dataset.spellId = spell.id;
     const md = formatSpellMarkdown(spell);
-    const isSent = spell.status === "sent";
     const badgeClass = isSent
       ? "status-badge sent"
       : spell.rebuilt
@@ -871,7 +964,9 @@ function renderSpells() {
       ? "CAST"
       : spell.rebuilt
         ? "REFILLED"
-        : escapeHtml(spell.status || "ready");
+        : mode === "primary"
+          ? "CAST THIS"
+          : escapeHtml(spell.status || "ready");
     const timeBits = [];
     if (spell.createdAt) timeBits.push(`forged ${formatSpellTime(spell.createdAt)}`);
     if (spell.rebuiltAt && !isSent) timeBits.push(`refilled ${formatSpellTime(spell.rebuiltAt)}`);
@@ -881,33 +976,24 @@ function renderSpells() {
     const timeLine = timeBits.length
       ? `<div class="spell-timestamps">${escapeHtml(timeBits.join(" · "))}</div>`
       : "";
-
     item.innerHTML = `
-      <button type="button" class="delete-btn" data-action="delete" title="${
-        isSent ? "Prune from history (two-tap)" : "Delete spell"
-      }">✕</button>
+      <button type="button" class="delete-btn" data-action="delete" title="${isSent ? "Prune from history (two-tap)" : "Delete spell"}">✕</button>
       <div class="spell-item-top">
         <div>
           <div class="spell-item-title">${escapeHtml(spell.purpose)}</div>
-          <div class="spell-item-meta">${escapeHtml(spell.medium)} · ${escapeHtml(spellKindKey(spell))}${
-            spell.engineeredFromAlignment ? " · aligned" : ""
-          }${isAlignmentSpell(spell) ? " · reveal" : ""}${isSent ? " · sealed" : ""}</div>
+          ${spellKindMetaHtml(spell, convo)}
         </div>
         <span class="${badgeClass}">${badgeText}</span>
       </div>
       <p class="spell-essence">${escapeHtml(spell.essence)}</p>
       ${timeLine}
       <div class="spell-actions">
-        <button type="button" class="btn-spell copy" data-action="copy">${
-          isSent ? "Copy again" : "Copy"
-        }</button>
+        <button type="button" class="btn-spell copy" data-action="copy">${isSent ? "Copy again" : "Copy"}</button>
         <button type="button" class="btn-spell expand" data-action="expand">View</button>
       </div>
       <pre class="spell-full">${escapeHtml(md)}</pre>
     `;
-    item
-      .querySelector('[data-action="copy"]')
-      .addEventListener("click", () => copySpell(spell.id, { seal: !isSent }));
+    item.querySelector('[data-action="copy"]').addEventListener("click", () => copySpell(spell.id, { seal: !isSent }));
     item.querySelector('[data-action="expand"]').addEventListener("click", () => {
       item.classList.toggle("expanded");
       const btn = item.querySelector('[data-action="expand"]');
@@ -918,7 +1004,24 @@ function renderSpells() {
       requestDeleteSpell(spell.id, e.currentTarget);
     });
     els.spellsList.appendChild(item);
-  });
+  }
+
+  if (primary) {
+    appendSpellCard(primary, "primary");
+  }
+  rest.forEach((spell) => appendSpellCard(spell, "hold"));
+}
+
+/**
+ * Color-coded spell kind label — never "Local · directive · aligned · sealed".
+ * SELF-CAST is green with exact paste hover for self-recursive Grimoire spells.
+ */
+function spellKindMetaHtml(spell, convo) {
+  const kind = classifySpellDisplay(spell, convo);
+  const hover = kind.key === "self-cast"
+    ? kind.hover
+    : spellPasteHint(spell, convo) || kind.hover;
+  return `<div class="spell-item-meta"><span class="spell-kind ${escapeHtml(kind.css)}" title="${escapeHtml(hover)}">${escapeHtml(kind.label)}</span></div>`;
 }
 
 /**
@@ -1805,60 +1908,45 @@ function maybeCaptureAlignmentNotes(convo, userText) {
 }
 
 /**
- * Channel purity — deny off-topic entities mid-exchange.
- * Never auto-creates focuses. Never wanders.
+ * Steering — Focus is always the sun/nucleus.
+ * Spells may radiate to any pertinent AI node in user reality; things adapt,
+ * reality is explained, and all intelligence densens back to this Focus.
+ * Only a hard "switch Focus" request is guided (never auto-create / never abandon nucleus).
  */
-function detectChannelViolation(convo, userText) {
+function detectHardFocusSwitch(convo, userText) {
   const text = (userText || "").trim();
   if (!text || !convo) return null;
 
-  const currentName = (convo.name || "").toLowerCase();
-  const currentChannel = getSealedChannel(convo).toLowerCase();
+  // Multi-node spell routes are allowed. Only catch explicit switch/open intents.
+  const switchRe =
+    /\b(?:switch(?:\s+to)?|open\s+focus|go\s+to\s+focus|change\s+focus\s+to|leave\s+this\s+focus)\b/i;
+  if (!switchRe.test(text)) return null;
 
-  // Other sealed focuses by full name
   for (const f of state.conversations) {
     if (f.id === convo.id) continue;
     const n = (f.name || "").trim();
     if (n.length < 3) continue;
-    if (n.toLowerCase() === currentName) {
-      // Same name, different backend — "Wizard King on Grok"
-      const ch = getSealedChannel(f);
-      const re = new RegExp(
-        `\\b${escapeRegExp(n)}\\b.{0,24}\\b(?:on|via|through)\\s+${escapeRegExp(ch)}\\b`,
-        "i"
-      );
-      if (re.test(text) || new RegExp(`\\b${escapeRegExp(ch)}\\b`, "i").test(text) &&
-          new RegExp(`\\b${escapeRegExp(n)}\\b`, "i").test(text) &&
-          ch.toLowerCase() !== currentChannel) {
-        // Only flag if they clearly mean another channel of same name
-        if (
-          new RegExp(`\\b(?:on|via|through)\\s+${escapeRegExp(ch)}\\b`, "i").test(text)
-        ) {
-          return `${n} · ${ch}`;
-        }
-      }
-      continue;
-    }
-    const re = new RegExp(`\\b${escapeRegExp(n)}\\b`, "i");
-    if (re.test(text)) {
-      // Require active channel-framing verbs; bare name mention is not a violation.
-      if (
-        new RegExp(
-          `\\b(?:talk(?:ing)?\\s+to|message|ask|tell|focus|open|about|with|for)\\s+${escapeRegExp(n)}\\b`,
-          "i"
-        ).test(text) ||
-        new RegExp(`\\b${escapeRegExp(n)}\\b.{0,12}\\b(?:on|via|channel|focus)\\b`, "i").test(
-          text
-        )
-      ) {
-        return `${n} · ${getSealedChannel(f)}`;
-      }
+    if (new RegExp(`\\b${escapeRegExp(n)}\\b`, "i").test(text)) {
+      return `${n} · ${getSealedChannel(f)}`;
     }
   }
-
-  // Explicit backend switching removed with simplified model.
-  // Current schema: one AI channel per Focus.
   return null;
+}
+
+/** Other Focus names mentioned for multi-node steering notes (not blocks). */
+function detectPertinentNodes(convo, userText) {
+  const text = (userText || "").trim();
+  if (!text || !convo) return [];
+  const hits = [];
+  for (const f of state.conversations) {
+    if (f.id === convo.id) continue;
+    const n = (f.name || "").trim();
+    if (n.length < 3) continue;
+    if (new RegExp(`\\b${escapeRegExp(n)}\\b`, "i").test(text)) {
+      hits.push(`${n} · ${getSealedChannel(f)}`);
+    }
+  }
+  return hits;
 }
 
 function escapeRegExp(s) {
@@ -1873,18 +1961,24 @@ function escapeRegExp(s) {
 function grimoireReply(convo, userText) {
   const medium = syncMediumFromControls(convo);
 
-  // CHANNEL PURITY — deny off-topic before any spellcraft
-  const violation = detectChannelViolation(convo, userText);
-  if (violation) {
+  // Hard switch only — multi-node spells radiate from this Focus (sun/nucleus)
+  const hardSwitch = detectHardFocusSwitch(convo, userText);
+  if (hardSwitch) {
     return {
-      reply: `That's outside this channel (**${convo.name} · ${medium}**). Open a new Focus to work with **${violation}**. I stay locked here — no auto-create, no wander.`,
+      reply: `**${convo.name}** remains the sun/nucleus. To densen **${hardSwitch}** as its own world, select that Focus in the sidebar — I will not abandon this channel. You can still cast spells *from here* that target any pertinent AI node; intelligence ties back to **${convo.name}**.`,
     };
   }
 
-  if (isAiNode(convo)) {
-    return grimoireReplyAiNode(convo, userText, medium);
+  const result = isAiNode(convo)
+    ? grimoireReplyAiNode(convo, userText, medium)
+    : grimoireReplyPersonOrNetwork(convo, userText, medium);
+
+  // Steering note: Focus can send to pertinent nodes; nucleus stays this Focus
+  const nodes = detectPertinentNodes(convo, userText);
+  if (nodes.length && result?.reply && !result.reply.includes("sun/nucleus")) {
+    result.reply += ` **Steering:** this Focus is the sun — spells may reach **${nodes.slice(0, 3).join(", ")}**; all returns densen here and explain why they matter to **${convo.name}**.`;
   }
-  return grimoireReplyPersonOrNetwork(convo, userText, medium);
+  return result;
 }
 
 /**
@@ -1983,21 +2077,23 @@ function grimoireReplyAiNode(convo, userText, medium) {
       spell.alignmentDirectives?.length ||
       convo.alignmentProfile?.directives?.length ||
       0;
+    const paste = spellPasteHint(spell, convo);
+    const kind = classifySpellDisplay(spell, convo);
     return {
-      reply: `**Spell forged: ${spell.purpose}.**${craft}${n ? ` Locked to **${n}** alignment directives.` : ""} **Open Spells panel to copy.**`,
+      reply: `**Spell forged: ${spell.purpose}.**${craft}${n ? ` Locked to **${n}** alignment directives.` : ""} Kind: **${kind.label}**. **Open Spells panel to copy** — ${paste}. **${convo.name}** is the sun/nucleus.`,
       spell,
     };
   }
 
   if (/\b(hello|hi|hey)\b/i.test(userText)) {
     return {
-      reply: `Sealed + aligned on **${seal}**. State a directive or ask for a spell — I engineer against the reveal, panel only.`,
+      reply: `Aligned on **${seal}**. **${convo.name}** is the sun/nucleus — spells may radiate to any pertinent AI node in your reality; returns densen here. State a directive or ask for a spell.`,
     };
   }
 
   const n = convo.alignmentProfile?.directives?.length || 0;
   return {
-    reply: `Holding **${seal}** with alignment on file${n ? ` (${n} directives)` : ""}. Ask for a spell when you want an engineered cast.`,
+    reply: `Holding **${seal}** with alignment on file${n ? ` (${n} directives)` : ""}. Ask for a spell when you want an engineered cast. Focus stays the sun — multi-node routes allowed.`,
   };
 }
 
@@ -2399,8 +2495,8 @@ function buildFocusIntelAtlas(convo, spells = state.spells) {
       title: "Next gate",
       lines: [
         "Cast Spell → Alignment Reveal",
-        "Send to node via sealed channel",
-        "Paste full reply here to ignite universe + unlock engineered spells",
+        "Copy → paste to the AI node (or any pertinent node this Focus steers)",
+        "Paste full reply here — Focus is the sun/nucleus; intelligence densens back",
       ],
     });
   }
@@ -2766,7 +2862,9 @@ async function copySpell(id, { seal = true } = {}) {
   } else {
     persist();
     renderSpells();
-    toast("Spell copied", "success");
+    const focus = state.conversations.find((c) => c.id === spell.conversationId);
+    const paste = spellPasteHint(spell, focus);
+    toast(paste ? `Copied — ${paste}` : "Spell copied", "success");
   }
 }
 
@@ -2812,9 +2910,12 @@ function markSent(id, { fromCopy = false } = {}) {
     );
   }
 
+  const paste = spell ? spellPasteHint(spell, focus) : "";
   toast(
     fromCopy
-      ? "Copied + sealed to Cast History — paste the reply when it returns"
+      ? paste
+        ? `Copied + sealed — ${paste}`
+        : "Copied + sealed to Cast History — paste the reply when it returns"
       : "Spell sealed to Cast History",
     "success"
   );
