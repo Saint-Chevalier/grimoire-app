@@ -361,12 +361,12 @@ export const SEED_CONVERSATIONS = [
     ],
   },
   {
-    id: "healer-hermes",
-    name: "Healer",
-    archetype: "healer",
+    id: "linkedin-network",
+    name: "LinkedIn Network",
+    type: "network",
+    archetype: "network",
     medium: "LinkedIn",
     backend: "LinkedIn",
-    type: "network",
     star: { x: 68, y: 70 },
     messages: [
       {
