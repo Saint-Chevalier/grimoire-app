@@ -65,10 +65,19 @@ import {
 } from "./health.js";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
+const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
 
 // ─── State ───
 
 const state = loadState();
+// Hide-chat / pure universe view (not part of vault state — UI chrome only)
+state.universeView = (() => {
+  try {
+    return localStorage.getItem(UNIVERSE_VIEW_KEY) === "1";
+  } catch {
+    return false;
+  }
+})();
 
 // Runtime purge for stale removed focuses that may still exist in saved state.
 (function purgeRemovedFocuses() {
@@ -110,6 +119,12 @@ const els = {
   btnAttach: $("#btn-attach"),
   btnNew: $("#btn-new-convo"),
   btnToggleSpells: $("#btn-toggle-spells"),
+  btnUniverseView: $("#btn-universe-view"),
+  btnUniverseViewExit: $("#btn-universe-view-exit"),
+  universeViewChrome: $("#universe-view-chrome"),
+  universeViewFocusIcon: $("#universe-view-focus-icon"),
+  universeViewFocusName: $("#universe-view-focus-name"),
+  universeViewFocusMeta: $("#universe-view-focus-meta"),
   btnCloseSpells: $("#btn-close-spells"),
   btnIntelFolder: $("#btn-intel-folder"),
   btnResetApp: $("#btn-reset-app"),
@@ -1453,6 +1468,7 @@ function spellTypeForFocus(convo, spell) {
 
 function renderAll() {
   els.app.classList.toggle("spells-collapsed", !state.spellsOpen);
+  applyUniverseViewMode();
   renderConvoList();
   renderChat();
   renderSpells();
@@ -1462,6 +1478,62 @@ function renderAll() {
   if (els.universeLegend && !els.universeLegend.hasAttribute("hidden")) {
     renderIntelAtlas(activeConvo());
   }
+}
+
+/** Persist + apply hide-chat / universe-only mode. */
+function setUniverseView(on, { silent = false } = {}) {
+  state.universeView = Boolean(on);
+  try {
+    localStorage.setItem(UNIVERSE_VIEW_KEY, state.universeView ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+  applyUniverseViewMode();
+  // Keep sky live for the active Focus nucleus
+  const snap = deriveFocusSnapshot(activeConvo(), state.spells);
+  setFocusUniverse(snap, { warp: false });
+  updateUniverseHudChrome(snap);
+  if (!silent) {
+    toast(
+      state.universeView
+        ? "Universe view — chat hidden · Focus is nucleus"
+        : "Chat restored",
+      "success"
+    );
+  }
+}
+
+function applyUniverseViewMode() {
+  const on = Boolean(state.universeView);
+  els.app?.classList.toggle("universe-view", on);
+  document.body.classList.toggle("universe-view-active", on);
+  if (els.btnUniverseView) {
+    els.btnUniverseView.setAttribute("aria-pressed", on ? "true" : "false");
+    els.btnUniverseView.title = on
+      ? "Show chat"
+      : "Hide chat — view universe only (stars · lines · Focus nucleus)";
+  }
+  if (els.universeViewChrome) {
+    if (on) els.universeViewChrome.removeAttribute("hidden");
+    else els.universeViewChrome.setAttribute("hidden", "");
+  }
+  // Focus nucleus label on chrome
+  const convo = activeConvo();
+  if (els.universeViewFocusName) {
+    els.universeViewFocusName.textContent = convo?.name || "No Focus";
+  }
+  if (els.universeViewFocusMeta) {
+    const ch = convo ? getSealedChannel(convo) : "—";
+    els.universeViewFocusMeta.textContent = convo ? `${ch} · nucleus` : "select a Focus";
+  }
+  if (els.universeViewFocusIcon && convo) {
+    const arch = ARCHETYPES[convo.archetype];
+    els.universeViewFocusIcon.textContent = arch?.icon || "☉";
+  }
+}
+
+function toggleUniverseView() {
+  setUniverseView(!state.universeView);
 }
 
 // ─── Actions ───
@@ -3725,6 +3797,20 @@ els.btnCloseSpells?.addEventListener("click", () => {
 els.tabSpellsActive?.addEventListener("click", () => setSpellView("active"));
 els.tabSpellsHistory?.addEventListener("click", () => setSpellView("history"));
 
+// Universe view — hide AI chat; pure intelligence sky (Focus = nucleus)
+els.btnUniverseView?.addEventListener("click", () => toggleUniverseView());
+els.btnUniverseViewExit?.addEventListener("click", () => setUniverseView(false));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.universeView) {
+    // Don't steal Esc from open modals/atlas
+    if (els.universeLegend && !els.universeLegend.hasAttribute("hidden")) return;
+    if (els.appSettingsPanel && !els.appSettingsPanel.hasAttribute("hidden")) return;
+    if (els.dialog?.open) return;
+    e.preventDefault();
+    setUniverseView(false);
+  }
+});
+
 // "+ New Focus" — always available; also handle clicks even if DOM re-queries
 function bindNewFocusButton() {
   const btn = document.getElementById("btn-new-convo") || els.btnNew;
@@ -3881,6 +3967,7 @@ els.btnAtlasClose?.addEventListener("click", () => setAtlasOpen(false));
 
 if (!state.spellsOpen) els.app.classList.add("spells-collapsed");
 applySidebarCollapsed(loadSidebarCollapsed());
+applyUniverseViewMode();
 // Silent merge of kind+purpose duplicates on load
 state.spells = dedupeSpells(
   (state.spells || []).filter((s) => !isReceiptSpell(s))

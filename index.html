@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=stars-force-1" />
+  <link rel="stylesheet" href="css/styles.css?v=universe-view-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -69,6 +69,9 @@
             <span class="label">Channel</span>
             <span class="sealed-value" id="sealed-channel-value">—</span>
           </div>
+          <button type="button" class="btn-icon" id="btn-universe-view" title="Hide chat — view universe only (stars · lines · Focus nucleus)" aria-label="Hide chat, view universe only" aria-pressed="false">
+            <span class="universe-view-icon" aria-hidden="true">☉</span>
+          </button>
           <button type="button" class="btn-icon" id="btn-toggle-spells" title="Toggle Spells panel" aria-label="Toggle Spells panel">
             <span class="spell-icon">✦</span>
             <span class="spell-count" id="spell-count">0</span>
@@ -168,6 +171,18 @@
     </form>
   </dialog>
 
+  <!-- Universe view chrome — only when chat is hidden -->
+  <div id="universe-view-chrome" class="universe-view-chrome" hidden>
+    <div class="universe-view-focus">
+      <span class="universe-view-focus-icon" id="universe-view-focus-icon" aria-hidden="true">☉</span>
+      <span class="universe-view-focus-name" id="universe-view-focus-name">Focus</span>
+      <span class="universe-view-focus-meta" id="universe-view-focus-meta">nucleus</span>
+    </div>
+    <button type="button" class="btn-universe-view-exit" id="btn-universe-view-exit" title="Show chat again (Esc)">
+      Show chat
+    </button>
+  </div>
+
   <!-- Universe HUD chip (star count + stage) — click opens Intel Atlas -->
   <button type="button" class="universe-hud" id="universe-hud" title="Open Intel Atlas — everything this Focus knows">
     ★ <span id="universe-hud-count">0</span> · <span id="universe-hud-stage">VOID</span>
@@ -224,6 +239,6 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=stars-force-1"></script>
+  <script type="module" src="js/app.js?v=universe-view-1"></script>
 </body>
 </html>

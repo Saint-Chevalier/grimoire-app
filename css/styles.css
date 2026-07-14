@@ -151,6 +151,129 @@ button {
   background: rgba(20, 15, 40, 0.65);
 }
 
+/* ─── Universe view mode: hide chat / rails, pure intelligence sky ─── */
+
+.app.universe-view .sidebar,
+.app.universe-view .spells-panel {
+  display: none !important;
+}
+
+.app.universe-view .main.chat-area {
+  flex: 1 1 100%;
+  width: 100%;
+  max-width: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app.universe-view .main.chat-area::before {
+  display: none; /* no lightning border over pure sky */
+}
+
+.app.universe-view .chat-header,
+.app.universe-view .chat-area-wrapper {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.app.universe-view .universe-hud {
+  bottom: 4.25rem; /* room for exit chrome */
+  z-index: 12;
+}
+
+.universe-view-chrome {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.55rem 0.4rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(180, 170, 255, 0.35);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  color: rgba(230, 225, 255, 0.95);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+  max-width: min(92vw, 420px);
+}
+
+.universe-view-chrome[hidden] {
+  display: none !important;
+}
+
+.universe-view-focus {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.universe-view-focus-icon {
+  color: var(--gold);
+  font-size: 0.95rem;
+  flex-shrink: 0;
+  text-shadow: 0 0 10px rgba(240, 215, 140, 0.45);
+}
+
+.universe-view-focus-name {
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.universe-view-focus-meta {
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(180, 190, 255, 0.65);
+  flex-shrink: 0;
+}
+
+.btn-universe-view-exit {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  background: rgba(96, 165, 250, 0.14);
+  color: #93c5fd;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.btn-universe-view-exit:hover {
+  background: rgba(96, 165, 250, 0.28);
+  border-color: rgba(96, 165, 250, 0.65);
+  color: #dbeafe;
+}
+
+#btn-universe-view .universe-view-icon {
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--gold);
+}
+
+.app.universe-view #btn-universe-view,
+body.universe-view-active #btn-universe-view {
+  /* header is hidden; control lives on chrome */
+}
+
+body.universe-view-active {
+  /* signal for any global chrome */
+}
+
 /* Healer Health Covenant bars (Atlas) */
 .health-covenant {
   margin: 0.35rem 0 0.6rem;
