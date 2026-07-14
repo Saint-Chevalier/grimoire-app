@@ -161,7 +161,7 @@ GRIMOIRE-FocusIntelligence/
   README.md
   Wizard King - Hermes.md
   Wizard King - Grok.md
-  Misty - Discord.md
+  Healer - Hermes.md
   ...
 \`\`\`
 
