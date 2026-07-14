@@ -2334,18 +2334,31 @@ button {
 
 .spell-actions {
   display: flex;
+  align-items: center;
   gap: 0.4rem;
   flex-wrap: wrap;
+  width: 100%;
+  min-height: 1.75rem;
+}
+
+.spell-actions.has-self-cast {
+  gap: 0.45rem;
 }
 
 .btn-spell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   font-size: 0.72rem;
   font-weight: 600;
   padding: 0.3rem 0.55rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   color: var(--text-muted);
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
+  visibility: visible;
+  opacity: 1;
 }
 
 .btn-spell:hover {
@@ -2354,6 +2367,7 @@ button {
 }
 
 .btn-spell.copy {
+  order: 2;
   color: var(--accent-2);
   border-color: rgba(96, 165, 250, 0.35);
 }
@@ -2362,21 +2376,30 @@ button {
   background: rgba(96, 165, 250, 0.12);
 }
 
-/* SELF-CAST — green sovereign inject into Focus chat */
+/* SELF-CAST — green sovereign inject; sits immediately left of Copy */
 .btn-spell.self-cast {
+  order: 1;
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
   color: #34d399;
-  border-color: rgba(52, 211, 153, 0.5);
-  background: rgba(52, 211, 153, 0.1);
+  border-color: rgba(52, 211, 153, 0.55);
+  background: rgba(52, 211, 153, 0.14);
   font-weight: 700;
   letter-spacing: 0.05em;
-  box-shadow: 0 0 12px rgba(52, 211, 153, 0.15);
+  text-transform: uppercase;
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.18);
 }
 
 .btn-spell.self-cast:hover {
   color: #6ee7b7;
-  background: rgba(52, 211, 153, 0.2);
-  border-color: rgba(52, 211, 153, 0.7);
-  box-shadow: 0 0 16px rgba(52, 211, 153, 0.25);
+  background: rgba(52, 211, 153, 0.24);
+  border-color: rgba(52, 211, 153, 0.75);
+  box-shadow: 0 0 16px rgba(52, 211, 153, 0.3);
+}
+
+.spell-item.spell-self-castable .spell-actions .btn-spell.self-cast {
+  display: inline-flex !important;
 }
 
 .btn-spell.mark-sent {
@@ -2389,6 +2412,7 @@ button {
 }
 
 .btn-spell.expand {
+  order: 3;
   margin-left: auto;
 }
 

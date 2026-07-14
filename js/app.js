@@ -900,8 +900,14 @@ function renderSpells() {
   if (view === "history") {
     list.forEach((spell) => {
       const item = document.createElement("article");
-      item.className = "spell-item spell-history";
+      const showSelf = shouldShowSelfCastButton(spell, convo);
+      // Keep kind stamped so label + button stay aligned after refresh
+      if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell)) {
+        spell.kind = "self-cast";
+      }
+      item.className = "spell-item spell-history" + (showSelf ? " spell-self-castable" : "");
       item.dataset.spellId = spell.id;
+      if (showSelf) item.dataset.selfCast = "1";
       const md = formatSpellMarkdown(spell);
       const badgeText = spell.rebuilt ? "REFILLED" : escapeHtml(spell.status || "sent");
       const timeLine = [
@@ -941,8 +947,17 @@ function renderSpells() {
   function appendSpellCard(spell, mode) {
     const item = document.createElement("article");
     const isSent = spell.status === "sent";
-    item.className = "spell-item" + (isSent ? " spell-history" : "") + (mode === "primary" ? " spell-primary" : " spell-hold");
+    const showSelf = shouldShowSelfCastButton(spell, convo);
+    if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell)) {
+      spell.kind = "self-cast";
+    }
+    item.className =
+      "spell-item" +
+      (isSent ? " spell-history" : "") +
+      (mode === "primary" ? " spell-primary" : " spell-hold") +
+      (showSelf ? " spell-self-castable" : "");
     item.dataset.spellId = spell.id;
+    if (showSelf) item.dataset.selfCast = "1";
     const md = formatSpellMarkdown(spell);
     const badgeClass = isSent
       ? "status-badge sent"
@@ -1001,24 +1016,52 @@ function spellKindMetaHtml(spell, convo) {
   return `<div class="spell-item-meta"><span class="spell-kind ${escapeHtml(kind.css)}" title="${escapeHtml(hover)}">${escapeHtml(kind.label)}</span></div>`;
 }
 
-/** Action row — SELF-CAST only on self-recursive spells. */
+/** Resolve the Focus that owns this spell (never rely on active alone). */
+function resolveSpellFocus(spell, fallback) {
+  if (spell?.conversationId) {
+    const hit = state.conversations.find((c) => c.id === spell.conversationId);
+    if (hit) return hit;
+  }
+  return fallback || activeConvo();
+}
+
+/**
+ * Show SELF-CAST only for self-recursive spells.
+ * Uses Focus identity + kind + Local·GRIMOIRE_ protocol so the button appears
+ * even when older localStorage cards still say kind: "directive".
+ */
+function shouldShowSelfCastButton(spell, convo) {
+  const focus = resolveSpellFocus(spell, convo);
+  if (isSelfCastSpell(spell, focus)) return true;
+  try {
+    if (classifySpellDisplay(spell, focus)?.key === "self-cast") return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/**
+ * Action row — SELF-CAST immediately before Copy (self-recursive only).
+ */
 function spellActionsHtml(spell, convo, { isSent }) {
-  const self = isSelfCastSpell(spell, convo);
+  const self = shouldShowSelfCastButton(spell, convo);
+  // Fixed order: SELF-CAST (optional) → Copy → View
   const selfBtn = self
-    ? `<button type="button" class="btn-spell self-cast" data-action="self-cast" title="Enter this spell into the current Focus chat automatically — no copy/paste">SELF-CAST</button>`
+    ? `<button type="button" class="btn-spell self-cast" data-action="self-cast" title="Enter this spell into the current Focus chat automatically — no copy/paste" aria-label="SELF-CAST into Focus chat">SELF-CAST</button>`
     : "";
-  return `
-    <div class="spell-actions">
-      ${selfBtn}
-      <button type="button" class="btn-spell copy" data-action="copy">${isSent ? "Copy again" : "Copy"}</button>
-      <button type="button" class="btn-spell expand" data-action="expand">View</button>
-    </div>`;
+  return `<div class="spell-actions${self ? " has-self-cast" : ""}">${selfBtn}<button type="button" class="btn-spell copy" data-action="copy">${isSent ? "Copy again" : "Copy"}</button><button type="button" class="btn-spell expand" data-action="expand">View</button></div>`;
 }
 
 function wireSpellCardActions(item, spell, { sealOnCopy }) {
-  item.querySelector('[data-action="self-cast"]')?.addEventListener("click", () => {
-    selfCastSpell(spell.id);
-  });
+  const selfBtn = item.querySelector('[data-action="self-cast"]');
+  if (selfBtn) {
+    selfBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      selfCastSpell(spell.id);
+    });
+  }
   item.querySelector('[data-action="copy"]')?.addEventListener("click", () =>
     copySpell(spell.id, { seal: sealOnCopy })
   );
@@ -1044,17 +1087,19 @@ function selfCastSpell(id) {
   const spell = state.spells.find((s) => s.id === id);
   if (!spell) return;
 
-  const focus =
-    state.conversations.find((c) => c.id === spell.conversationId) || activeConvo();
+  const focus = resolveSpellFocus(spell, activeConvo());
   if (!focus) {
     toast("Select a Focus first", "");
     return;
   }
 
-  if (!isSelfCastSpell(spell, focus)) {
+  if (!shouldShowSelfCastButton(spell, focus)) {
     toast("SELF-CAST is only for self-recursive spells", "");
     return;
   }
+
+  // Normalize kind so re-renders always show the button after seal
+  if (spell.kind !== "self-cast") spell.kind = "self-cast";
 
   // Land in the spell's Focus chat (nucleus for this cast)
   if (state.activeId !== focus.id) {

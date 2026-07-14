@@ -1512,6 +1512,11 @@ function migrateState(state) {
   for (const s of state.spells || []) {
     if (isAlignmentSpell(s) && !s.kind) s.kind = "alignment";
     if (!s.kind) s.kind = "standard";
+    // Stamp self-recursive cards so SELF-CAST button appears after hard-refresh
+    const focus = (state.conversations || []).find((c) => c.id === s.conversationId);
+    if (focus && !isAlignmentSpell(s) && isSelfCastSpell(s, focus)) {
+      s.kind = "self-cast";
+    }
   }
 
   // Drop legacy receipt cards (SPELL RECEIVED / SEALED CHANNEL CONFIRMED)
@@ -1605,27 +1610,42 @@ function corpusOfSpell(spell) {
 /** True when this Focus / spell is the living Grimoire self-loop (Local · GRIMOIRE). */
 export function isSelfRecursiveFocus(convo) {
   if (!convo) return false;
-  const name = String(convo.name || "").toLowerCase();
+  const name = String(convo.name || "").toLowerCase().trim();
   const ch = String(getSealedChannel(convo) || "").toLowerCase();
   const id = String(convo.id || "").toLowerCase();
-  return (
-    /\bgrimoire\b/.test(name) ||
-    id.includes("grimoire") ||
-    (ch === "local" && /grimoire|book|self/.test(name))
-  );
+  const medium = String(convo.medium || convo.backend || convo.model || "").toLowerCase();
+  if (/\bgrimoire\b/.test(name) || id.includes("grimoire")) return true;
+  if ((ch === "local" || medium === "local") && /grimoire|book|codex|self/.test(name)) {
+    return true;
+  }
+  // Exact living-book ids / file stems
+  if (/^grimoire([-_ ]|$)/i.test(id) || name === "grimoire") return true;
+  return false;
 }
 
+/**
+ * Self-recursive spells only — drives green SELF-CAST label + button next to Copy.
+ * Detects: kind, Focus identity, Local·GRIMOIRE_ protocol, body markers.
+ */
 export function isSelfCastSpell(spell, convo) {
   if (!spell) return false;
-  const k = String(spell.kind || "").toLowerCase();
+  const k = String(spell.kind || "").toLowerCase().trim();
   if (k === "self-cast" || k === "self-recursive") return true;
+  if (spell.selfCastAt) return true;
   if (isSelfRecursiveFocus(convo)) return true;
+
   const target = String(spell.target || "").toLowerCase();
   const medium = String(spell.medium || "").toLowerCase();
+  const purpose = String(spell.purpose || "");
   const body = corpusOfSpell(spell);
-  if (/\bgrimoire\b/.test(target) && (medium === "local" || medium === "open")) return true;
+
+  // GRIMOIRE · Local self-loop (name / target / purpose protocol)
+  if (/\bgrimoire\b/.test(target) && (medium === "local" || medium === "open" || !medium)) {
+    return true;
+  }
+  if (medium === "local" && /^GRIMOIRE_[A-Z0-9_]+/i.test(purpose.trim())) return true;
   if (
-    /self-recursive|self.?cast|you are the grimoire app|grimoire_focus|grimoire_spell_display|grimoire_focus_ui/i.test(
+    /self-recursive|self.?cast|you are the grimoire app|grimoire lane only|grimoire_[a-z0-9_]+/i.test(
       body
     )
   ) {
