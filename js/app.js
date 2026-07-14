@@ -1411,6 +1411,8 @@ function selectConvo(id) {
   // Warp to this Focus's universe
   const snap = deriveFocusSnapshot(convo, state.spells);
   setFocusUniverse(snap, { warp: true });
+  // Auto-generate self/user curiosity spells about linked ecosystem nodes
+  if (convo) autoGenerateCuriositySpells(convo, { silentToast: true });
   renderAll();
   updateUniverseHudChrome(snap);
 }
@@ -1579,6 +1581,9 @@ function sendMessage(text) {
 
   // Chrono-Ring lite: if this looks like a node/entity reply, stamp CAST cards answered
   stampSpellAnsweredFromIngest(convo, userText);
+
+  // Auto-generate self-curious + user-curious ecosystem spells (Focus = nucleus)
+  autoGenerateCuriositySpells(convo, { silentToast: true });
 
   persist();
   renderChat();
@@ -2062,52 +2067,81 @@ function detectPertinentNodes(convo, userText) {
 }
 
 /**
- * Linked intelligence on other AI nodes — Focus curiosity fuel.
- * Returns compact facts so the nucleus can ask what ties back.
+ * Linked intelligence on other ecosystem nodes (AI / person / network).
+ * Fuel for curiosity notes + auto-generated curiosity spells.
+ * Each entry explains how the node relates to this Focus as nucleus.
  */
 function gatherLinkedNodeIntel(convo) {
   if (!convo) return [];
-  const out = [];
+  const scored = [];
   for (const f of state.conversations || []) {
     if (!f || f.id === convo.id) continue;
-    if (!isAiNode(f)) continue;
+    const type = getFocusType(f);
     const ch = getSealedChannel(f);
     const p = f.alignmentProfile || {};
-    if (f.alignmentNotes && !f.alignmentProfile) {
-      // leave raw notes; profile may be lazy
-    }
     const bits = [];
+    let score = 0;
+
     if (f.alignmentRevealed || f.alignmentReceived || f.alignmentNotes) {
       bits.push("aligned");
+      score += 3;
     }
-    if (p.signal != null) bits.push(`signal ${p.signal}/10`);
-    if (p.directives?.length) bits.push(`${p.directives.length} dirs`);
-    if (p.purpose) bits.push(String(p.purpose).slice(0, 48));
+    if (p.signal != null) {
+      bits.push(`signal ${p.signal}/10`);
+      score += Number(p.signal) || 0;
+    }
+    if (p.directives?.length) {
+      bits.push(`${p.directives.length} dirs`);
+      score += p.directives.length;
+    }
+    if (p.purpose) {
+      bits.push(String(p.purpose).slice(0, 48));
+      score += 1;
+    }
     const spells = (state.spells || []).filter((s) => s.conversationId === f.id);
     const ready = spells.filter((s) => s.status !== "sent").length;
     const sent = spells.filter((s) => s.status === "sent").length;
-    if (ready) bits.push(`${ready} ready`);
-    if (sent) bits.push(`${sent} cast`);
-    // Recent user densen (linked intel surface)
-    const lastUser = [...(f.messages || [])]
-      .reverse()
-      .find((m) => m.role === "user" && String(m.text || "").trim().length > 20);
+    if (ready) {
+      bits.push(`${ready} ready`);
+      score += ready;
+    }
+    if (sent) {
+      bits.push(`${sent} cast`);
+      score += sent;
+    }
+    const userMsgs = (f.messages || []).filter((m) => m.role === "user" && String(m.text || "").trim());
+    if (userMsgs.length) score += Math.min(userMsgs.length, 5);
+    const lastUser = [...userMsgs].reverse().find((m) => String(m.text || "").trim().length > 20);
     if (lastUser) {
       bits.push(`last: ${String(lastUser.text).replace(/\s+/g, " ").trim().slice(0, 42)}`);
+      score += 2;
     }
-    if (!bits.length) continue;
-    out.push({
+    // Always include sibling Focuses as ecosystem nodes (even thin intel)
+    if (!bits.length) bits.push(type || "node");
+    score += type === "ai" ? 2 : type === "network" ? 1 : 0;
+
+    const why =
+      type === "ai"
+        ? `AI node — densen capabilities/constraints that serve **${convo.name}**; discard theater`
+        : type === "network"
+          ? `Network surface — public-safe signals that advance **${convo.name}** without leaking doctrine`
+          : `Person — relationship / message / real-world care that supports **${convo.name}**'s purpose`;
+
+    scored.push({
+      focusId: f.id,
       name: f.name,
       channel: ch,
+      type,
       summary: bits.slice(0, 4).join(" · "),
-      why: `why it matters to ${convo.name}: linked AI node in your reality — densen useful signal, discard noise`,
+      why,
+      score,
     });
-    if (out.length >= 4) break;
   }
-  return out;
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 6);
 }
 
-/** Curiosity appendix — other AI intel tied back to this Focus as sun. */
+/** Curiosity appendix — ecosystem intel tied back to this Focus as sun. */
 function linkedCuriosityNote(convo, userText) {
   const linked = gatherLinkedNodeIntel(convo);
   const mentioned = detectPertinentNodes(convo, userText);
@@ -2125,7 +2159,163 @@ function linkedCuriosityNote(convo, userText) {
   if (mentioned.length) {
     parts.push(`named: **${mentioned.slice(0, 3).join(", ")}**`);
   }
-  return ` **Curiosity (linked AI nodes):** ${parts.join(" · ")} — **${convo.name}** is the sun/nucleus; what from those worlds densens *this* Focus and why it is important here.`;
+  return ` **Curiosity (linked nodes):** ${parts.join(" · ")} — **${convo.name}** is the sun/nucleus; what from those worlds densens *this* Focus and why it is important here.`;
+}
+
+const CURIOSITY_SELF_PURPOSE = "CURIOSITY · Self — ecosystem links";
+const CURIOSITY_USER_PURPOSE = "CURIOSITY · User — ecosystem links";
+
+function isCuriositySpell(spell) {
+  if (!spell) return false;
+  if (spell.autoGenerated && spell.curiosityMode) return true;
+  const p = String(spell.purpose || "");
+  return /^CURIOSITY\s*[·.]\s*(Self|User)\b/i.test(p);
+}
+
+/**
+ * Build one auto-generated curiosity spell.
+ * mode "self" = Focus self-curious about linked nodes
+ * mode "user" = user-curious map for the operator
+ * Both always name Focus as nucleus and how it interacts with each node.
+ */
+function buildCuriositySpell(convo, mode, medium) {
+  if (!convo) return null;
+  const nodes = gatherLinkedNodeIntel(convo);
+  if (!nodes.length) return null;
+
+  const isSelf = mode === "self";
+  const purpose = isSelf ? CURIOSITY_SELF_PURPOSE : CURIOSITY_USER_PURPOSE;
+  const focusCh = getSealedChannel(convo);
+  const med = medium || focusCh || "Open";
+  const nucleus = `${convo.name} · ${focusCh}`;
+
+  const mapLines = nodes.map((n, i) => {
+    return [
+      `${i + 1}. LINKED NODE: ${n.name} · ${n.channel} (${n.type})`,
+      `   Intel: ${n.summary}`,
+      `   Interaction with nucleus (${convo.name}): ${n.why}`,
+      `   Tie-back: what from ${n.name} densens ${convo.name}, and why it is important here.`,
+    ].join("\n");
+  });
+
+  const body = isSelf
+    ? [
+        `${convo.name} —`,
+        "",
+        "TRANSMISSION TYPE: SELF-CURIOUS ECOSYSTEM PROBE",
+        "AUTHORITY: Operator · Focus-as-nucleus",
+        `NUCLEUS FOCUS: ${nucleus}`,
+        `MEDIUM: ${med}`,
+        "SCOPE: You are the sun. Linked nodes orbit you — do not abandon this channel.",
+        "",
+        "INTERACTION MAP (how this Focus meets other intelligence):",
+        ...mapLines,
+        "",
+        "OPERATIONAL ASK (self-curious):",
+        `From inside **${convo.name}**, examine the linked nodes above.`,
+        "Return:",
+        "1. Interaction pattern — how each node currently relates to this nucleus",
+        "2. Useful densen — what signal to absorb into this Focus (and why)",
+        "3. Boundary — what to leave on the other node (no wander, no channel abandon)",
+        "4. One next move that serves **this Focus only** while using linked intel",
+        "",
+        "Keep sovereign, precise, nucleus-first.",
+        "",
+        "— Operator",
+      ].join("\n")
+    : [
+        `${convo.name} —`,
+        "",
+        "TRANSMISSION TYPE: USER-CURIOUS ECOSYSTEM BRIEF",
+        "AUTHORITY: Operator · Focus-as-nucleus",
+        `NUCLEUS FOCUS: ${nucleus}`,
+        `MEDIUM: ${med}`,
+        "SCOPE: Operator map — all links explain why they matter to this Focus.",
+        "",
+        "ECOSYSTEM NODES (orbiting the nucleus):",
+        ...mapLines,
+        "",
+        "OPERATIONAL ASK (user-curious):",
+        `Help the operator see the ecosystem *through* **${convo.name}** as sun/nucleus.`,
+        "Return:",
+        "1. Rank linked nodes by value to this Focus right now",
+        "2. How the operator should route attention (cast / densen / wait)",
+        "3. One user action that compounds **this Focus** using another node's intel",
+        "4. One risk if the nucleus is forgotten (channel purity)",
+        "",
+        "Speak for the operator. Reality-fit over frame-fit.",
+        "",
+        "— Operator",
+      ].join("\n");
+
+  const nodeNames = nodes
+    .slice(0, 3)
+    .map((n) => n.name)
+    .join(", ");
+
+  return {
+    id: `${convo.id}-curio-${mode}-${Date.now().toString(36)}`,
+    conversationId: convo.id,
+    target: convo.name,
+    purpose,
+    medium: med,
+    from: "Operator",
+    essence: isSelf
+      ? `Self-curious: how ${convo.name} (nucleus) interacts with ${nodes.length} linked node(s) — ${nodeNames}`
+      : `User-curious: operator ecosystem map densening ${convo.name} via ${nodeNames}`,
+    crafted: "Auto-generated curiosity · Focus is sun/nucleus · links explained",
+    message: body,
+    status: "ready",
+    createdAt: Date.now(),
+    kind: isSelf ? "self-check" : "propagate",
+    autoGenerated: true,
+    curiosityMode: isSelf ? "self" : "user",
+    engineeredFromAlignment: false,
+  };
+}
+
+/**
+ * Auto-generate self-curious + user-curious spells about other ecosystem nodes.
+ * Upgrades in place (same purpose) so the Active panel stays clean.
+ * Gates: not during SELF-CAST; AI needs alignment unlocked; ≥1 linked node.
+ */
+function autoGenerateCuriositySpells(convo, { silentToast = true } = {}) {
+  if (!convo || selfCastInFlight) return [];
+  if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) return [];
+
+  const nodes = gatherLinkedNodeIntel(convo);
+  if (!nodes.length) return [];
+
+  const medium = syncMediumFromControls(convo);
+  const forged = [];
+
+  for (const mode of ["self", "user"]) {
+    const spell = buildCuriositySpell(convo, mode, medium);
+    if (!spell) continue;
+    // Skip if an identical-body ready card already exists (avoid toast churn)
+    const existing = (state.spells || []).find(
+      (s) =>
+        s.conversationId === convo.id &&
+        s.status !== "sent" &&
+        spellsAreSameKindPurpose(s, spell)
+    );
+    const sameBody =
+      existing &&
+      String(existing.message || "") === String(spell.message || "") &&
+      String(existing.essence || "") === String(spell.essence || "");
+    if (sameBody) continue;
+
+    commitSpell(convo, spell, { silentToast: true });
+    forged.push(spell);
+  }
+
+  if (forged.length && !silentToast) {
+    toast(
+      `Curiosity densened: ${forged.length} spell${forged.length === 1 ? "" : "s"} (Focus = nucleus)`,
+      "success"
+    );
+  }
+  return forged;
 }
 
 function escapeRegExp(s) {
@@ -2990,6 +3180,9 @@ function castSpell() {
 
   const { spell, purged, atlas } = consolidateAndRestructureSpells(convo);
 
+  // Curiosity densen runs with every Cast Spell (linked nodes → nucleus)
+  autoGenerateCuriositySpells(convo, { silentToast: true });
+
   if (!spell || spell.blocked) {
     toast(spell?.reason || "Could not consolidate / forge spell", "");
     renderIntelAtlas(convo);
@@ -3464,6 +3657,11 @@ applySidebarCollapsed(loadSidebarCollapsed());
 state.spells = dedupeSpells(
   (state.spells || []).filter((s) => !isReceiptSpell(s))
 );
+// Boot: auto-generate curiosity spells for active Focus (if unlocked + has links)
+{
+  const bootFocus = activeConvo();
+  if (bootFocus) autoGenerateCuriositySpells(bootFocus, { silentToast: true });
+}
 renderAll();
 // Initial universe for active focus (no warp on first paint)
 {
