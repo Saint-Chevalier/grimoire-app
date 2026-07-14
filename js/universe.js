@@ -27,6 +27,13 @@ let mouseX = 0.5;
 let mouseY = 0.5;
 let targetMouseX = 0.5;
 let targetMouseY = 0.5;
+/** Grab-drag look-around (normalized, small range) */
+let panX = 0;
+let panY = 0;
+let dragState = null; // { x, y, panX0, panY0, pointerId }
+let hoverLabel = "";
+/** @type {HTMLElement|null} */
+let tipEl = null;
 
 /** @type {UniverseState|null} */
 let uni = null;
@@ -35,6 +42,9 @@ let stageFlash = 0;
 let lastStageId = -1;
 let lastSwitchAt = 0;
 let onHud = null;
+
+const PAN_CLAMP = 0.55;
+const PAN_SENS = 0.00165;
 
 /**
  * @typedef {Object} UniverseState
@@ -198,7 +208,10 @@ export function deriveFocusSnapshot(convo, spells) {
   const spellsSent = focusSpells.filter((s) => s.status === "sent").length;
   const spellsReady = focusSpells.filter((s) => s.status !== "sent").length;
   vaultBits += focusSpells.length;
-  const dirs = convo.alignmentProfile?.directives?.length || 0;
+  const dirList = (convo.alignmentProfile?.directives || [])
+    .map((d) => String(d || "").trim())
+    .filter(Boolean);
+  const dirs = dirList.length;
   const signal =
     convo.alignmentProfile?.signal != null
       ? Number(convo.alignmentProfile.signal)
@@ -221,6 +234,10 @@ export function deriveFocusSnapshot(convo, spells) {
     imageCount,
   });
 
+  const sentPurposes = focusSpells
+    .filter((s) => s.status === "sent")
+    .map((s) => String(s.purpose || "spell").slice(0, 72));
+
   return {
     focusId: convo.id,
     name: convo.name || "",
@@ -230,9 +247,11 @@ export function deriveFocusSnapshot(convo, spells) {
     signal: Math.max(1, Math.min(10, signal || 5)),
     aligned,
     directives: dirs,
+    directiveLabels: dirList.slice(0, 8),
     spellsTotal: focusSpells.length,
     spellsSent,
     spellsReady,
+    sentPurposes,
     focusSpells,
     createdAt,
     ageMs,
@@ -329,6 +348,10 @@ function buildUniverse(snapshot) {
     });
   }
 
+  const focusName = snapshot.name || "Focus";
+  const dirLabels = snapshot.directiveLabels || [];
+  const sentPurposes = snapshot.sentPurposes || [];
+
   // Intel stars — seed MOST immediately so sky is full on first frame
   const stars = [];
   const seedCount = Math.min(
@@ -338,13 +361,18 @@ function buildUniverse(snapshot) {
   for (let i = 0; i < seedCount; i++) {
     // First wave settled (visible now); last few spawn-fade for life
     const spawn = i > seedCount - 6 ? 0.35 : 0;
-    stars.push(makeIntelStar(rng, i, targets.fieldMix, densen, spawn));
+    const star = makeIntelStar(rng, i, targets.fieldMix, densen, spawn);
+    star.title = star.field
+      ? `Intel star · ${focusName} field knowledge #${i + 1}`
+      : `Intel star · densened capture near ${focusName} nucleus #${i + 1}`;
+    stars.push(star);
   }
 
   // Planets from directives (max 8)
   const planets = [];
   const pCount = Math.min(8, snapshot.directives || 0);
   for (let i = 0; i < pCount; i++) {
+    const label = dirLabels[i] || `Directive ${i + 1}`;
     planets.push({
       orbit: 0.08 + i * 0.035 + rng() * 0.01,
       angle: rng() * Math.PI * 2,
@@ -352,6 +380,7 @@ function buildUniverse(snapshot) {
       r: 2.5 + rng() * 2.5,
       color: i % 2 === 0 ? palette.a : palette.b,
       phase: rng() * Math.PI * 2,
+      title: `Directive planet · ${label}`,
     });
   }
 
@@ -367,6 +396,7 @@ function buildUniverse(snapshot) {
       color: i % 3 === 0 ? palette.a : i % 3 === 1 ? palette.b : palette.c,
       a: 0.08 + rng() * 0.1,
       rot: rng() * Math.PI * 2,
+      title: `Visual intel nebula · image capture ${i + 1} for ${focusName}`,
     });
   }
 
@@ -377,6 +407,7 @@ function buildUniverse(snapshot) {
     const a = stars[i % Math.max(1, stars.length)];
     const b = stars[(i * 3 + 7) % Math.max(1, stars.length)];
     if (a && b && a !== b) {
+      const purpose = sentPurposes[i] || `cast #${i + 1}`;
       lines.push({
         x1: a.x,
         y1: a.y,
@@ -384,6 +415,7 @@ function buildUniverse(snapshot) {
         y2: b.y,
         a: 0.2 + rng() * 0.15,
         locked: true,
+        title: `Spell link · ${purpose}`,
       });
     }
   }
@@ -395,6 +427,7 @@ function buildUniverse(snapshot) {
         r: 6,
         ignition: 0,
         pulse: 0,
+        title: `Focus nucleus · ${focusName} (sun — all intel orbits here)`,
       }
     : null;
 
@@ -472,6 +505,7 @@ export function initUniverse(canvasEl, opts = {}) {
   if (!canvas) return;
   ctx = canvas.getContext("2d", { alpha: false });
   onHud = opts.onHud || null;
+  ensureHoverTip();
 
   const resize = () => {
     if (!canvas) return;
@@ -490,11 +524,20 @@ export function initUniverse(canvasEl, opts = {}) {
   window.addEventListener(
     "mousemove",
     (e) => {
-      targetMouseX = e.clientX / Math.max(1, window.innerWidth);
-      targetMouseY = e.clientY / Math.max(1, window.innerHeight);
+      if (!dragState) {
+        targetMouseX = e.clientX / Math.max(1, window.innerWidth);
+        targetMouseY = e.clientY / Math.max(1, window.innerHeight);
+        updateHoverAt(e.clientX, e.clientY);
+      }
     },
     { passive: true }
   );
+
+  // Grab / drag to look around (tiny interaction)
+  window.addEventListener("pointerdown", onPointerDown, { passive: false });
+  window.addEventListener("pointermove", onPointerMove, { passive: false });
+  window.addEventListener("pointerup", onPointerUp, { passive: true });
+  window.addEventListener("pointercancel", onPointerUp, { passive: true });
 
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopLoop();
@@ -502,6 +545,242 @@ export function initUniverse(canvasEl, opts = {}) {
   });
 
   startLoop();
+}
+
+function ensureHoverTip() {
+  if (tipEl || typeof document === "undefined") return;
+  tipEl = document.createElement("div");
+  tipEl.id = "universe-hover-tip";
+  tipEl.className = "universe-hover-tip";
+  tipEl.setAttribute("role", "tooltip");
+  tipEl.hidden = true;
+  document.body.appendChild(tipEl);
+}
+
+function showHoverTip(text, clientX, clientY) {
+  ensureHoverTip();
+  if (!tipEl) return;
+  if (!text) {
+    tipEl.hidden = true;
+    tipEl.textContent = "";
+    return;
+  }
+  tipEl.hidden = false;
+  tipEl.textContent = text;
+  const pad = 14;
+  const tw = tipEl.offsetWidth || 160;
+  const th = tipEl.offsetHeight || 28;
+  let x = clientX + pad;
+  let y = clientY + pad;
+  if (x + tw > window.innerWidth - 8) x = clientX - tw - pad;
+  if (y + th > window.innerHeight - 8) y = clientY - th - pad;
+  tipEl.style.left = `${Math.max(6, x)}px`;
+  tipEl.style.top = `${Math.max(6, y)}px`;
+}
+
+function isUiChromeTarget(el) {
+  if (!el || !el.closest) return false;
+  return Boolean(
+    el.closest(
+      "button, a, input, textarea, select, option, label, dialog, .sidebar, .spells-panel, .chat-header, .chat-input-bar, .message, .modal, .atlas-overlay, .settings-panel, .universe-view-chrome, .universe-hud, .pending-images, .btn-icon, .spell-item, .convo-item"
+    )
+  );
+}
+
+/** Start grab only on sky / non-chrome targets (or always in universe view). */
+function canStartUniverseDrag(e) {
+  if (e.button !== 0 && e.button !== 1) return false;
+  const t = e.target;
+  if (isUiChromeTarget(t)) return false;
+  if (document.body.classList.contains("universe-view-active")) return true;
+  // Chat mode: empty main / messages background / canvas
+  if (t === canvas) return true;
+  if (t?.closest?.(".main.chat-area") && !t.closest?.(".message")) return true;
+  if (e.button === 1) return true; // middle-mouse always pans a little
+  return false;
+}
+
+function onPointerDown(e) {
+  if (!canStartUniverseDrag(e)) return;
+  dragState = {
+    x: e.clientX,
+    y: e.clientY,
+    panX0: panX,
+    panY0: panY,
+    pointerId: e.pointerId,
+  };
+  try {
+    e.currentTarget?.setPointerCapture?.(e.pointerId);
+  } catch {
+    /* ignore */
+  }
+  document.body.classList.add("universe-dragging");
+  showHoverTip("", 0, 0);
+  if (e.button === 1) e.preventDefault();
+}
+
+function onPointerMove(e) {
+  if (!dragState) return;
+  if (dragState.pointerId != null && e.pointerId !== dragState.pointerId) return;
+  const dx = e.clientX - dragState.x;
+  const dy = e.clientY - dragState.y;
+  panX = Math.max(-PAN_CLAMP, Math.min(PAN_CLAMP, dragState.panX0 + dx * PAN_SENS));
+  panY = Math.max(-PAN_CLAMP, Math.min(PAN_CLAMP, dragState.panY0 + dy * PAN_SENS));
+  e.preventDefault();
+}
+
+function onPointerUp(e) {
+  if (!dragState) return;
+  if (dragState.pointerId != null && e.pointerId !== dragState.pointerId) return;
+  dragState = null;
+  document.body.classList.remove("universe-dragging");
+  updateHoverAt(e.clientX, e.clientY);
+}
+
+function viewOffsets(w, h) {
+  const px = (mouseX - 0.5) * 18 + panX * Math.min(w, h) * 0.42;
+  const py = (mouseY - 0.5) * 12 + panY * Math.min(w, h) * 0.36;
+  return { px, py };
+}
+
+function dist2(ax, ay, bx, by) {
+  const dx = ax - bx;
+  const dy = ay - by;
+  return dx * dx + dy * dy;
+}
+
+/** Hit-test intelligence parts under cursor (screen space). */
+function hitTestUniverse(clientX, clientY) {
+  if (!uni) return null;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const { px, py } = viewOffsets(w, h);
+  const u = uni;
+  const minDim = Math.min(w, h);
+
+  // Sun / nucleus (top priority)
+  if (u.sun) {
+    const sx = u.sun.x * w + px;
+    const sy = u.sun.y * h + py;
+    const hitR = 14 + (u.sun.ignition || 0) * 10;
+    if (dist2(clientX, clientY, sx, sy) <= hitR * hitR) {
+      return u.sun.title || `Focus nucleus · ${u.name || "Focus"}`;
+    }
+  }
+
+  // Planets (directives)
+  if (u.sun && u.planets?.length) {
+    const sx = u.sun.x * w + px;
+    const sy = u.sun.y * h + py;
+    for (let i = u.planets.length - 1; i >= 0; i--) {
+      const p = u.planets[i];
+      const pxp = sx + Math.cos(p.angle) * p.orbit * minDim;
+      const pyp = sy + Math.sin(p.angle) * p.orbit * minDim * 0.72;
+      const hitR = (p.r || 3) + 8;
+      if (dist2(clientX, clientY, pxp, pyp) <= hitR * hitR) {
+        return p.title || `Directive planet ${i + 1}`;
+      }
+    }
+  }
+
+  // Intel stars
+  const starLayerPx = px * 0.85;
+  const starLayerPy = py * 0.85;
+  if (u.stars?.length) {
+    let best = null;
+    let bestD = 12 * 12;
+    for (let i = u.stars.length - 1; i >= 0; i--) {
+      const s = u.stars[i];
+      const x = s.x * w + starLayerPx;
+      const y = s.y * h + starLayerPy;
+      const d = dist2(clientX, clientY, x, y);
+      const hitR = Math.max(6, (s.r || 1) + 5);
+      if (d <= hitR * hitR && d <= bestD) {
+        bestD = d;
+        best = s.title || `Intel star #${i + 1}`;
+      }
+    }
+    if (best) return best;
+  }
+
+  // Spell constellation lines (near segment)
+  if (u.lines?.length) {
+    const lpx = px * 0.7;
+    const lpy = py * 0.7;
+    for (let i = u.lines.length - 1; i >= 0; i--) {
+      const ln = u.lines[i];
+      const x1 = ln.x1 * w + lpx;
+      const y1 = ln.y1 * h + lpy;
+      const x2 = ln.x2 * w + lpx;
+      const y2 = ln.y2 * h + lpy;
+      if (distToSegment2(clientX, clientY, x1, y1, x2, y2) <= 7 * 7) {
+        return ln.title || (ln.locked ? "Spell link · sealed cast" : "Constellation line");
+      }
+    }
+  }
+
+  // Nebulae (visual intel)
+  if (u.nebulae?.length) {
+    const npx = px * 0.35;
+    const npy = py * 0.35;
+    for (let i = u.nebulae.length - 1; i >= 0; i--) {
+      const n = u.nebulae[i];
+      const nx = n.x * w + npx;
+      const ny = n.y * h + npy;
+      const hitR = Math.min(48, (n.r || 40) * 0.45);
+      if (dist2(clientX, clientY, nx, ny) <= hitR * hitR) {
+        return n.title || `Visual intel nebula ${i + 1}`;
+      }
+    }
+  }
+
+  // Deep field
+  if (u.staticStars?.length) {
+    const spx = px * 0.45;
+    const spy = py * 0.45;
+    for (let i = 0; i < Math.min(u.staticStars.length, 80); i += 3) {
+      const s = u.staticStars[i];
+      const x = s.x * w + spx;
+      const y = s.y * h + spy;
+      if (dist2(clientX, clientY, x, y) <= 5 * 5) {
+        return `Deep-field star · outer space around ${u.name || "Focus"}`;
+      }
+    }
+  }
+
+  return null;
+}
+
+function distToSegment2(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-6) return dist2(px, py, x1, y1);
+  let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const qx = x1 + t * dx;
+  const qy = y1 + t * dy;
+  return dist2(px, py, qx, qy);
+}
+
+function updateHoverAt(clientX, clientY) {
+  if (dragState) {
+    hoverLabel = "";
+    showHoverTip("", 0, 0);
+    return;
+  }
+  const label = hitTestUniverse(clientX, clientY);
+  hoverLabel = label || "";
+  if (canvas) {
+    canvas.title = hoverLabel;
+    canvas.style.cursor = hoverLabel ? "help" : "";
+  }
+  showHoverTip(hoverLabel, clientX, clientY);
+  if (hoverLabel) {
+    document.body.classList.add("universe-hovering");
+  } else {
+    document.body.classList.remove("universe-hovering");
+  }
 }
 
 function startLoop() {
@@ -589,9 +868,18 @@ function tickUniverse(u, dt) {
     while (u._fillAcc >= 1 && u.stars.length < u.starTarget) {
       u._fillAcc -= 1;
       const rng = makeRng(u.seed + u.stars.length * 997 + Math.floor(u.time * 10));
-      u.stars.push(
-        makeIntelStar(rng, u.stars.length, u.fieldMix || 0.4, u.densenProgress || 0, 1)
-      );
+      const star = makeIntelStar(
+      rng,
+      u.stars.length,
+      u.fieldMix || 0.4,
+      u.densenProgress || 0,
+      1
+    );
+    const idx = u.stars.length + 1;
+    star.title = star.field
+      ? `Intel star · ${u.name || "Focus"} field knowledge #${idx}`
+      : `Intel star · densened capture near ${u.name || "Focus"} nucleus #${idx}`;
+    u.stars.push(star);
     }
   }
   u.fillT = u.starTarget > 0 ? Math.min(1, u.stars.length / u.starTarget) : 1;
@@ -678,8 +966,7 @@ function draw() {
   if (!ctx || !canvas) return;
   const w = window.innerWidth;
   const h = window.innerHeight;
-  const px = (mouseX - 0.5) * 18;
-  const py = (mouseY - 0.5) * 12;
+  const { px, py } = viewOffsets(w, h);
 
   // Deep space
   ctx.fillStyle = "#000000";
@@ -1017,6 +1304,7 @@ function applySnapshotDiff(u, snap, rebuilt) {
   while (u.planets.length < Math.min(8, snap.directives || 0)) {
     const i = u.planets.length;
     const rng = makeRng(u.seed + 900 + i);
+    const dLabel = (snap.directiveLabels && snap.directiveLabels[i]) || `Directive ${i + 1}`;
     u.planets.push({
       orbit: 0.08 + i * 0.035,
       angle: rng() * Math.PI * 2,
@@ -1024,7 +1312,18 @@ function applySnapshotDiff(u, snap, rebuilt) {
       r: 2.5 + rng() * 2,
       color: i % 2 === 0 ? u.palette.a : u.palette.b,
       phase: 0,
+      title: `Directive planet · ${dLabel}`,
     });
+  }
+  // Refresh planet titles when directives densen
+  if (snap.directiveLabels?.length && u.planets?.length) {
+    for (let i = 0; i < u.planets.length; i++) {
+      const dLabel = snap.directiveLabels[i] || `Directive ${i + 1}`;
+      u.planets[i].title = `Directive planet · ${dLabel}`;
+    }
+  }
+  if (u.sun) {
+    u.sun.title = `Focus nucleus · ${snap.name || u.name || "Focus"} (sun — all intel orbits here)`;
   }
 
   // Nebulae
@@ -1041,6 +1340,7 @@ function applySnapshotDiff(u, snap, rebuilt) {
       a: 0.08 + rng() * 0.1,
       rot: 0,
       bloom: 1,
+      title: `Visual intel nebula · image capture ${i + 1} for ${snap.name || u.name || "Focus"}`,
     });
   }
 
@@ -1092,6 +1392,7 @@ function spawnStars(u, n, spiral) {
     if (spiral) {
       const ang = (Math.PI * 2 * k) / Math.max(1, n) - Math.PI / 2;
       const dist = 0.1 + k * 0.02;
+      const idx = u.stars.length + 1;
       u.stars.push({
         x: 0.5 + Math.cos(ang) * dist,
         y: 0.48 + Math.sin(ang) * dist * 0.85,
@@ -1102,9 +1403,15 @@ function spawnStars(u, n, spiral) {
         spawn: 1,
         layer: 2,
         field: false,
+        title: `Intel star · densened capture near ${u.name || "Focus"} nucleus #${idx}`,
       });
     } else {
-      u.stars.push(makeIntelStar(rng, u.stars.length, fieldMix, densen, 1));
+      const star = makeIntelStar(rng, u.stars.length, fieldMix, densen, 1);
+      const idx = u.stars.length + 1;
+      star.title = star.field
+        ? `Intel star · ${u.name || "Focus"} field knowledge #${idx}`
+        : `Intel star · densened capture near ${u.name || "Focus"} nucleus #${idx}`;
+      u.stars.push(star);
     }
   }
   u.starCount = u.staticStars.length + u.stars.length + (u.sun ? 1 : 0);
@@ -1118,6 +1425,7 @@ function lockLine(u) {
   if (i === j) return;
   const a = u.stars[i];
   const b = u.stars[j];
+  const n = u.lines.filter((l) => l.locked).length;
   u.lines.push({
     x1: a.x,
     y1: a.y,
@@ -1125,6 +1433,7 @@ function lockLine(u) {
     y2: b.y,
     a: 0.28,
     locked: true,
+    title: `Spell link · sealed cast #${n + 1} · ${u.name || "Focus"}`,
   });
 }
 

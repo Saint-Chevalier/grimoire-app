@@ -94,6 +94,51 @@ button {
   visibility: visible;
 }
 
+/* Universe view: canvas receives grab/drag; app shell is click-through */
+body.universe-view-active .universe-canvas {
+  pointer-events: auto;
+  cursor: grab;
+  z-index: 1;
+}
+
+body.universe-dragging,
+body.universe-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+body.universe-view-active .app.universe-view {
+  pointer-events: none;
+}
+
+body.universe-view-active .universe-view-chrome,
+body.universe-view-active .universe-hud {
+  pointer-events: auto;
+}
+
+/* Hover titles for focus intelligence parts (sun, planets, stars, links) */
+.universe-hover-tip {
+  position: fixed;
+  z-index: 40;
+  max-width: min(320px, 70vw);
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 170, 255, 0.4);
+  background: rgba(6, 6, 14, 0.92);
+  color: rgba(235, 230, 255, 0.95);
+  font-size: 0.72rem;
+  font-family: var(--font-body);
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+}
+
+.universe-hover-tip[hidden] {
+  display: none !important;
+}
+
 /* Legacy DOM starfield (unused when canvas is live) */
 #constellation,
 #stars-canvas,
