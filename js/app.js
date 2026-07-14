@@ -137,13 +137,13 @@ const els = {
   spellsHint: $("#spells-hint"),
   tabSpellsActive: $("#tab-spells-active"),
   tabSpellsHistory: $("#tab-spells-history"),
-  littleChat: $("#little-chat"),
-  littleChatBody: $("#little-chat-body"),
+  complexCraftDialog: $("#complex-craft-dialog"),
+  btnComplexCraftClose: $("#btn-complex-craft-close"),
+  complexCraftSub: $("#complex-craft-sub"),
   littleChatMessages: $("#little-chat-messages"),
   littleChatForm: $("#little-chat-form"),
   littleChatInput: $("#little-chat-input"),
   btnLittleChatSend: $("#btn-little-chat-send"),
-  btnLittleChatToggle: $("#btn-little-chat-toggle"),
   btnSpellsTitle: $("#btn-spells-title"),
   spellsTitleMenu: $("#spells-title-menu"),
   btnCraftComplexSpell: $("#btn-craft-complex-spell"),
@@ -1574,8 +1574,6 @@ function renderAll() {
 
 // ─── Complex spell little chat (quantum leap plans) ───
 
-const LITTLE_CHAT_COLLAPSE_KEY = "grimoire-little-chat-collapsed-v1";
-
 function ensureLittleChat(convo) {
   if (!convo) return null;
   if (!convo.littleChat || typeof convo.littleChat !== "object") {
@@ -1585,26 +1583,6 @@ function ensureLittleChat(convo) {
   if (!Array.isArray(convo.littleChat.leaps)) convo.littleChat.leaps = [];
   if (!Array.isArray(convo.littleChat.checklist)) convo.littleChat.checklist = [];
   return convo.littleChat;
-}
-
-function loadLittleChatCollapsed() {
-  try {
-    return localStorage.getItem(LITTLE_CHAT_COLLAPSE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function setLittleChatCollapsed(collapsed) {
-  try {
-    localStorage.setItem(LITTLE_CHAT_COLLAPSE_KEY, collapsed ? "1" : "0");
-  } catch {
-    /* ignore */
-  }
-  els.littleChat?.classList.toggle("collapsed", Boolean(collapsed));
-  if (els.btnLittleChatToggle) {
-    els.btnLittleChatToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-  }
 }
 
 function setSpellsTitleMenuOpen(open) {
@@ -1617,8 +1595,16 @@ function setSpellsTitleMenuOpen(open) {
   btn.classList.toggle("open", Boolean(open));
 }
 
+function closeComplexCraftDialog() {
+  try {
+    els.complexCraftDialog?.close();
+  } catch {
+    els.complexCraftDialog?.removeAttribute("open");
+  }
+}
+
 /**
- * Spells → Craft complex spell: open little chat in checklist craft mode.
+ * Spells → Craft complex spell: modal little chat + large checklist (not a bottom dock).
  */
 function openCraftComplexSpell() {
   setSpellsTitleMenuOpen(false);
@@ -1628,15 +1614,13 @@ function openCraftComplexSpell() {
     return;
   }
 
-  // Ensure spells panel is open
+  // Spells panel can stay open; craft UI is the modal (no bottom cut-off)
   state.spellsOpen = true;
   els.app?.classList.remove("spells-collapsed");
-  setLittleChatCollapsed(false);
 
   const lc = ensureLittleChat(convo);
   lc.craftMode = true;
 
-  // Seed large plan checklist if empty
   if (!lc.checklist.length) {
     lc.checklist = defaultComplexChecklist(convo).map((text) => ({
       id: uid("chk"),
@@ -1645,7 +1629,6 @@ function openCraftComplexSpell() {
     }));
   }
 
-  // Opening system note (once per empty thread)
   if (!lc.messages.length) {
     lc.messages.push({
       id: uid("lcm"),
@@ -1656,11 +1639,22 @@ function openCraftComplexSpell() {
     });
   }
 
+  if (els.complexCraftSub) {
+    els.complexCraftSub.textContent = `${convo.name} · ${getSealedChannel(convo)} · nucleus`;
+  }
+
   persist();
-  renderSpells();
   renderLittleChat();
-  els.littleChat?.classList.add("craft-mode");
-  els.littleChat?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+  const dlg = els.complexCraftDialog;
+  if (dlg) {
+    try {
+      if (typeof dlg.showModal === "function") dlg.showModal();
+      else dlg.setAttribute("open", "");
+    } catch {
+      dlg.setAttribute("open", "");
+    }
+  }
   els.littleChatInput?.focus();
   toast("Complex spell craft open — plan checklist ready", "success");
 }
@@ -1712,18 +1706,19 @@ function renderLittleChat() {
       : "Select a Focus for complex spell plans…";
   }
   if (send) send.disabled = !enabled;
+  if (els.complexCraftSub && convo) {
+    els.complexCraftSub.textContent = `${convo.name} · ${getSealedChannel(convo)} · nucleus`;
+  }
 
   box.innerHTML = "";
   if (!convo) {
-    box.innerHTML = `<div class="little-chat-empty">Select a Focus — little chat densens complex / quantum-leap plans for that nucleus only.</div>`;
-    els.littleChat?.classList.remove("craft-mode");
+    box.innerHTML = `<div class="little-chat-empty">Select a Focus, then Spells → Craft complex spell.</div>`;
     return;
   }
 
   const lc = ensureLittleChat(convo);
-  els.littleChat?.classList.toggle("craft-mode", Boolean(lc.craftMode));
 
-  // Large checklist block (craft mode / when steps exist)
+  // Large checklist block
   if (lc.checklist.length) {
     const list = document.createElement("div");
     list.className = "complex-checklist-panel";
@@ -1759,7 +1754,6 @@ function renderLittleChat() {
         if (!step) return;
         step.done = Boolean(cb.checked);
         persist();
-        // light densen when a step completes
         if (step.done) {
           densenConstellationFromIntel(convo, 1);
           universeEvent("intel", { count: 1 });
@@ -1773,7 +1767,7 @@ function renderLittleChat() {
   }
 
   if (!lc.messages.length && !lc.checklist.length) {
-    box.innerHTML = `<div class="little-chat-empty">Tap <strong>Spells</strong> → <strong>Craft complex spell</strong>, or speak a quantum leap plan here. Unlocks denser spells for <strong>${escapeHtml(convo.name)}</strong>.</div>`;
+    box.innerHTML = `<div class="little-chat-empty">Tap <strong>Spells</strong> → <strong>Craft complex spell</strong> to build a quantum leap checklist for <strong>${escapeHtml(convo.name)}</strong>.</div>`;
     return;
   }
 
@@ -4211,12 +4205,7 @@ els.littleChatInput?.addEventListener("keydown", (e) => {
   }
 });
 
-els.btnLittleChatToggle?.addEventListener("click", () => {
-  const collapsed = !els.littleChat?.classList.contains("collapsed");
-  setLittleChatCollapsed(collapsed);
-});
-
-// Spells title menu → Craft complex spell
+// Spells title menu → Craft complex spell (modal — no bottom dock)
 els.btnSpellsTitle?.addEventListener("click", (e) => {
   e.stopPropagation();
   const open = els.spellsTitleMenu?.hasAttribute("hidden");
@@ -4225,6 +4214,11 @@ els.btnSpellsTitle?.addEventListener("click", (e) => {
 els.btnCraftComplexSpell?.addEventListener("click", (e) => {
   e.stopPropagation();
   openCraftComplexSpell();
+});
+els.btnComplexCraftClose?.addEventListener("click", () => closeComplexCraftDialog());
+els.complexCraftDialog?.addEventListener("cancel", (e) => {
+  e.preventDefault();
+  closeComplexCraftDialog();
 });
 document.addEventListener("click", (e) => {
   if (!e.target.closest?.(".spells-title-wrap")) {
@@ -4443,7 +4437,6 @@ els.btnAtlasClose?.addEventListener("click", () => setAtlasOpen(false));
 if (!state.spellsOpen) els.app.classList.add("spells-collapsed");
 applySidebarCollapsed(loadSidebarCollapsed());
 applyUniverseViewMode();
-setLittleChatCollapsed(loadLittleChatCollapsed());
 // Silent merge of kind+purpose duplicates on load
 state.spells = dedupeSpells(
   (state.spells || []).filter((s) => !isReceiptSpell(s))

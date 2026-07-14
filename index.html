@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=bottom-complex-1" />
+  <link rel="stylesheet" href="css/styles.css?v=complex-cleanup-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -138,34 +138,34 @@
         <button type="button" class="spell-view-tab active" id="tab-spells-active" data-view="active" role="tab" aria-selected="true">Active</button>
         <button type="button" class="spell-view-tab" id="tab-spells-history" data-view="history" role="tab" aria-selected="false">Cast History</button>
       </div>
-      <p class="spells-hint" id="spells-hint">Copy closes the cast (sent + time-stamped). Paste the node reply, densen, Cast Spell for the next true priority.</p>
+      <p class="spells-hint" id="spells-hint">Tap a spell card to copy (seals the cast). Paste the reply into chat to densen, then Cast Spell for the next true priority.</p>
       <div class="spells-list" id="spells-list"></div>
-
-      <!-- Complex spell little AI chat — quantum leap plans (separate from main Focus chat) -->
-      <section class="little-chat" id="little-chat" aria-label="Complex spell little chat">
-        <header class="little-chat-header">
-          <button type="button" class="little-chat-toggle" id="btn-little-chat-toggle" aria-expanded="true" title="Toggle complex spell little chat">
-            <span class="little-chat-title">Complex · little chat</span>
-            <span class="little-chat-sub">quantum leap plans</span>
-            <span class="little-chat-chevron" aria-hidden="true">▾</span>
-          </button>
-        </header>
-        <div class="little-chat-body" id="little-chat-body">
-          <div class="little-chat-messages" id="little-chat-messages" role="log" aria-live="polite"></div>
-          <form class="little-chat-form" id="little-chat-form" autocomplete="off">
-            <textarea
-              id="little-chat-input"
-              class="little-chat-input"
-              rows="2"
-              placeholder="Direct plan — quantum leaps that unlock more for this Focus…"
-              disabled
-            ></textarea>
-            <button type="submit" class="btn-little-chat-send" id="btn-little-chat-send" title="Send plan" disabled>→</button>
-          </form>
-        </div>
-      </section>
     </aside>
   </div>
+
+  <!-- Complex spell craft — modal (not bottom dock). Opened via Spells → Craft complex spell -->
+  <dialog id="complex-craft-dialog" class="modal complex-craft-modal">
+    <div class="complex-craft-shell">
+      <header class="complex-craft-header">
+        <div>
+          <h2>Craft complex spell</h2>
+          <p class="complex-craft-sub" id="complex-craft-sub">Quantum leap plan · Focus nucleus</p>
+        </div>
+        <button type="button" class="atlas-close" id="btn-complex-craft-close" title="Close" aria-label="Close complex craft">×</button>
+      </header>
+      <div class="little-chat-messages complex-craft-messages" id="little-chat-messages" role="log" aria-live="polite"></div>
+      <form class="little-chat-form complex-craft-form" id="little-chat-form" autocomplete="off">
+        <textarea
+          id="little-chat-input"
+          class="little-chat-input"
+          rows="2"
+          placeholder="Plan steps — quantum leaps that unlock more for this Focus…"
+          disabled
+        ></textarea>
+        <button type="submit" class="btn-little-chat-send" id="btn-little-chat-send" title="Send plan" disabled>→</button>
+      </form>
+    </div>
+  </dialog>
 
   <!-- New Focus modal -->
   <dialog id="new-convo-dialog" class="modal">
@@ -274,6 +274,6 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=bottom-complex-1"></script>
+  <script type="module" src="js/app.js?v=complex-cleanup-1"></script>
 </body>
 </html>
