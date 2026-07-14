@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=spell-tap-copy-1" />
+  <link rel="stylesheet" href="css/styles.css?v=bottom-complex-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -118,7 +118,17 @@
     <!-- RIGHT: Spells panel -->
     <aside class="spells-panel" id="spells-panel">
       <header class="spells-header">
-        <h3>Spells</h3>
+        <div class="spells-title-wrap">
+          <button type="button" class="spells-title-btn" id="btn-spells-title" aria-haspopup="menu" aria-expanded="false" title="Spell options">
+            Spells
+            <span class="spells-title-caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="spells-title-menu" id="spells-title-menu" role="menu" hidden>
+            <button type="button" class="spells-title-menu-item" role="menuitem" id="btn-craft-complex-spell" data-action="craft-complex">
+              Craft complex spell
+            </button>
+          </div>
+        </div>
         <div class="spells-header-actions">
           <button type="button" class="btn-clear-all" id="btn-clear-all" title="Clear all active spells for this focus">Clear Active</button>
           <button type="button" class="btn-icon subtle" id="btn-close-spells" title="Collapse panel" aria-label="Collapse Spells panel">›</button>
@@ -264,6 +274,6 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=spell-tap-copy-1"></script>
+  <script type="module" src="js/app.js?v=bottom-complex-1"></script>
 </body>
 </html>

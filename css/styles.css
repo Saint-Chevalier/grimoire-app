@@ -168,7 +168,7 @@ body.universe-view-active .universe-hud {
   /* Sit under the center chat input, never over left / right rails */
   position: fixed;
   left: 50%;
-  bottom: 10px;
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   z-index: 5;
   padding: 0.32rem 0.62rem;
@@ -2079,14 +2079,31 @@ body.universe-view-active .message.system {
   margin-bottom: 0.35rem;
 }
 
-/* Input bar — transparent void (no bg image / upload contamination) */
+/* Input bar — transparent void; room so Cast/Send never clip under HUD */
 
 .chat-input-bar {
-  padding: 0.5rem 1.25rem 1.1rem;
+  padding: 0.5rem 1.25rem calc(1.35rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: max(2.75rem, calc(1.35rem + env(safe-area-inset-bottom, 0px)));
   border-top: none;
   background: transparent;
   backdrop-filter: none;
   box-shadow: none;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 3;
+}
+
+.input-actions {
+  flex-wrap: wrap;
+  row-gap: 0.4rem;
+  padding-bottom: 0.15rem;
+}
+
+.input-actions .btn-primary,
+.input-actions .btn-secondary,
+.input-actions .btn-send {
+  flex-shrink: 0;
+  min-height: 2.25rem;
 }
 
 .status-badge.rebuilt {
@@ -2254,6 +2271,8 @@ body.universe-view-active .message.system {
   backdrop-filter: blur(12px);
   border-left: 1px solid rgba(255, 255, 255, 0.06);
   overflow: hidden;
+  min-height: 0;
+  height: 100%;
 }
 
 /* ─── Complex spell little chat (quantum leap plans) ─── */
@@ -2264,8 +2283,10 @@ body.universe-view-active .message.system {
   flex-direction: column;
   border-top: 1px solid rgba(167, 139, 250, 0.22);
   background: rgba(6, 6, 14, 0.55);
-  max-height: 42%;
+  max-height: min(48%, 320px);
   min-height: 0;
+  /* Keep form / send above panel bottom edge */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .little-chat.collapsed {
@@ -2334,12 +2355,99 @@ body.universe-view-active .message.system {
 .little-chat-messages {
   flex: 1 1 auto;
   min-height: 72px;
-  max-height: 160px;
+  max-height: 200px;
   overflow-y: auto;
   padding: 0.45rem 0.65rem;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+}
+
+.little-chat.craft-mode .little-chat-messages {
+  max-height: 260px;
+}
+
+/* Large complex-spell plan checklist */
+.complex-checklist-panel {
+  flex-shrink: 0;
+  margin: 0.15rem 0 0.35rem;
+  padding: 0.55rem 0.5rem 0.45rem;
+  border-radius: 10px;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  background: rgba(12, 10, 28, 0.75);
+  box-shadow: 0 0 20px rgba(100, 80, 200, 0.12);
+}
+
+.complex-checklist-head {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: rgba(200, 185, 255, 0.95);
+  margin-bottom: 0.45rem;
+}
+
+.complex-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.complex-checklist-item {
+  margin: 0;
+}
+
+.complex-checklist-label {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: start;
+  gap: 0.4rem;
+  padding: 0.4rem 0.45rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.complex-checklist-label:hover {
+  border-color: rgba(167, 139, 250, 0.35);
+}
+
+.complex-checklist-item.done .complex-checklist-text {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.complex-checklist-num {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--gold);
+  min-width: 1rem;
+  padding-top: 0.1rem;
+}
+
+.complex-checklist-text {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.complex-checklist-foot {
+  margin-top: 0.4rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.complex-checklist-label input[type="checkbox"] {
+  margin-top: 0.15rem;
+  accent-color: #a78bfa;
 }
 
 .little-chat-empty {
@@ -2391,9 +2499,11 @@ body.universe-view-active .message.system {
 .little-chat-form {
   display: flex;
   gap: 0.35rem;
-  padding: 0.4rem 0.55rem 0.55rem;
+  padding: 0.4rem 0.55rem calc(0.65rem + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid rgba(255, 255, 255, 0.05);
   align-items: flex-end;
+  flex-shrink: 0;
+  background: rgba(6, 6, 14, 0.9);
 }
 
 .little-chat-input {
@@ -2465,14 +2575,92 @@ body.universe-view-active .message.system {
   gap: 0.5rem;
   padding: 1rem 1rem 0.5rem;
   border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 4;
+  flex-shrink: 0;
 }
 
-.spells-header h3 {
+.spells-header h3,
+.spells-title-btn {
   font-family: var(--font-display);
   font-size: 0.95rem;
   letter-spacing: 0.1em;
   font-weight: 600;
   color: var(--gold);
+}
+
+.spells-title-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.spells-title-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.35rem 0.15rem 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.spells-title-btn:hover,
+.spells-title-btn.open {
+  color: #f5e6a8;
+  text-shadow: 0 0 12px rgba(240, 215, 140, 0.35);
+}
+
+.spells-title-caret {
+  font-size: 0.65rem;
+  opacity: 0.7;
+  transition: transform 150ms ease;
+}
+
+.spells-title-btn.open .spells-title-caret {
+  transform: rotate(180deg);
+}
+
+.spells-title-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 11.5rem;
+  padding: 0.3rem;
+  border-radius: 10px;
+  border: 1px solid rgba(180, 170, 255, 0.28);
+  background: rgba(8, 8, 16, 0.96);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+}
+
+.spells-title-menu[hidden] {
+  display: none !important;
+}
+
+.spells-title-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.65rem;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(230, 225, 255, 0.95);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.spells-title-menu-item:hover {
+  background: rgba(167, 139, 250, 0.18);
+  color: #fff;
+}
+
+.spells-list {
+  min-height: 0;
 }
 
 .spells-header-actions {

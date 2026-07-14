@@ -144,6 +144,9 @@ const els = {
   littleChatInput: $("#little-chat-input"),
   btnLittleChatSend: $("#btn-little-chat-send"),
   btnLittleChatToggle: $("#btn-little-chat-toggle"),
+  btnSpellsTitle: $("#btn-spells-title"),
+  spellsTitleMenu: $("#spells-title-menu"),
+  btnCraftComplexSpell: $("#btn-craft-complex-spell"),
   constellationPing: $("#constellation-ping"),
   app: $(".app") || document.querySelector(".app"),
   stars: $("#stars"),
@@ -1576,10 +1579,11 @@ const LITTLE_CHAT_COLLAPSE_KEY = "grimoire-little-chat-collapsed-v1";
 function ensureLittleChat(convo) {
   if (!convo) return null;
   if (!convo.littleChat || typeof convo.littleChat !== "object") {
-    convo.littleChat = { messages: [], leaps: [] };
+    convo.littleChat = { messages: [], leaps: [], checklist: [], craftMode: false };
   }
   if (!Array.isArray(convo.littleChat.messages)) convo.littleChat.messages = [];
   if (!Array.isArray(convo.littleChat.leaps)) convo.littleChat.leaps = [];
+  if (!Array.isArray(convo.littleChat.checklist)) convo.littleChat.checklist = [];
   return convo.littleChat;
 }
 
@@ -1603,6 +1607,96 @@ function setLittleChatCollapsed(collapsed) {
   }
 }
 
+function setSpellsTitleMenuOpen(open) {
+  const menu = els.spellsTitleMenu;
+  const btn = els.btnSpellsTitle;
+  if (!menu || !btn) return;
+  if (open) menu.removeAttribute("hidden");
+  else menu.setAttribute("hidden", "");
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  btn.classList.toggle("open", Boolean(open));
+}
+
+/**
+ * Spells → Craft complex spell: open little chat in checklist craft mode.
+ */
+function openCraftComplexSpell() {
+  setSpellsTitleMenuOpen(false);
+  const convo = activeConvo();
+  if (!convo) {
+    toast("Select a Focus first", "");
+    return;
+  }
+
+  // Ensure spells panel is open
+  state.spellsOpen = true;
+  els.app?.classList.remove("spells-collapsed");
+  setLittleChatCollapsed(false);
+
+  const lc = ensureLittleChat(convo);
+  lc.craftMode = true;
+
+  // Seed large plan checklist if empty
+  if (!lc.checklist.length) {
+    lc.checklist = defaultComplexChecklist(convo).map((text) => ({
+      id: uid("chk"),
+      text,
+      done: false,
+    }));
+  }
+
+  // Opening system note (once per empty thread)
+  if (!lc.messages.length) {
+    lc.messages.push({
+      id: uid("lcm"),
+      role: "grimoire",
+      kind: "complex-checklist",
+      text: `**Craft complex spell** for **${convo.name}** (nucleus).\nWork the plan checklist below — each step unlocks denser Focus intelligence. Main chat stays clean.`,
+      ts: Date.now(),
+    });
+  }
+
+  persist();
+  renderSpells();
+  renderLittleChat();
+  els.littleChat?.classList.add("craft-mode");
+  els.littleChat?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  els.littleChatInput?.focus();
+  toast("Complex spell craft open — plan checklist ready", "success");
+}
+
+function defaultComplexChecklist(convo) {
+  const name = convo?.name || "Focus";
+  return [
+    `Name the quantum leap for ${name} (what becomes true)`,
+    "List constraints / non-negotiables for this Focus",
+    "Identify the first unlock that densens the nucleus",
+    "Break the leap into ordered steps (3–7 moves)",
+    "Mark success criteria — how we know the complex spell worked",
+    "Forge path: Cast Spell against this plan when ready",
+  ];
+}
+
+/** Parse user plan text into checklist steps. */
+function extractChecklistSteps(text) {
+  const t = String(text || "").trim();
+  if (!t) return [];
+  const lines = t.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+  const steps = [];
+  for (const line of lines) {
+    const m = line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/);
+    const body = (m ? m[1] : line).replace(/^#+\s*/, "").trim();
+    if (body.length >= 6 && body.length <= 160) steps.push(body);
+  }
+  if (steps.length >= 2) return steps.slice(0, 10);
+  // Sentence clauses as steps
+  return t
+    .split(/[.;]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 10 && s.length <= 140)
+    .slice(0, 8);
+}
+
 function renderLittleChat() {
   const convo = activeConvo();
   const box = els.littleChatMessages;
@@ -1614,7 +1708,7 @@ function renderLittleChat() {
   if (input) {
     input.disabled = !enabled;
     input.placeholder = enabled
-      ? `Direct plan for ${convo.name} — quantum leaps that unlock more…`
+      ? `Plan steps for ${convo.name} — complex spell / quantum leap…`
       : "Select a Focus for complex spell plans…";
   }
   if (send) send.disabled = !enabled;
@@ -1622,12 +1716,64 @@ function renderLittleChat() {
   box.innerHTML = "";
   if (!convo) {
     box.innerHTML = `<div class="little-chat-empty">Select a Focus — little chat densens complex / quantum-leap plans for that nucleus only.</div>`;
+    els.littleChat?.classList.remove("craft-mode");
     return;
   }
 
   const lc = ensureLittleChat(convo);
-  if (!lc.messages.length) {
-    box.innerHTML = `<div class="little-chat-empty">Speak a <strong>quantum leap plan</strong> here — separate from the main chat. Unlocks denser spells for <strong>${escapeHtml(convo.name)}</strong>.</div>`;
+  els.littleChat?.classList.toggle("craft-mode", Boolean(lc.craftMode));
+
+  // Large checklist block (craft mode / when steps exist)
+  if (lc.checklist.length) {
+    const list = document.createElement("div");
+    list.className = "complex-checklist-panel";
+    list.innerHTML = `<div class="complex-checklist-head">Complex spell plan · checklist</div>`;
+    const ul = document.createElement("ul");
+    ul.className = "complex-checklist";
+    lc.checklist.forEach((step, idx) => {
+      const li = document.createElement("li");
+      li.className = "complex-checklist-item" + (step.done ? " done" : "");
+      const id = step.id || `chk-${idx}`;
+      step.id = id;
+      li.innerHTML = `
+        <label class="complex-checklist-label">
+          <input type="checkbox" data-check-id="${escapeAttr(id)}" ${step.done ? "checked" : ""} />
+          <span class="complex-checklist-num">${idx + 1}</span>
+          <span class="complex-checklist-text">${escapeHtml(step.text)}</span>
+        </label>`;
+      ul.appendChild(li);
+    });
+    list.appendChild(ul);
+    const doneN = lc.checklist.filter((s) => s.done).length;
+    const foot = document.createElement("div");
+    foot.className = "complex-checklist-foot";
+    foot.textContent = `${doneN} / ${lc.checklist.length} steps · densens ${convo.name}`;
+    list.appendChild(foot);
+    box.appendChild(list);
+
+    list.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        e.stopPropagation();
+        const id = cb.getAttribute("data-check-id");
+        const step = lc.checklist.find((s) => s.id === id);
+        if (!step) return;
+        step.done = Boolean(cb.checked);
+        persist();
+        // light densen when a step completes
+        if (step.done) {
+          densenConstellationFromIntel(convo, 1);
+          universeEvent("intel", { count: 1 });
+        }
+        renderLittleChat();
+        const snap = deriveFocusSnapshot(convo, state.spells);
+        setFocusUniverse(snap, { warp: false });
+        updateUniverseHudChrome(snap);
+      });
+    });
+  }
+
+  if (!lc.messages.length && !lc.checklist.length) {
+    box.innerHTML = `<div class="little-chat-empty">Tap <strong>Spells</strong> → <strong>Craft complex spell</strong>, or speak a quantum leap plan here. Unlocks denser spells for <strong>${escapeHtml(convo.name)}</strong>.</div>`;
     return;
   }
 
@@ -1642,7 +1788,7 @@ function renderLittleChat() {
 }
 
 /**
- * Local reply for complex-spell little chat — quantum leap plans that unlock Focus densen.
+ * Local reply for complex-spell little chat — builds / refines plan checklist.
  * Never writes into the main Focus chat stream.
  */
 function littleChatReply(convo, userText) {
@@ -1652,7 +1798,8 @@ function littleChatReply(convo, userText) {
   const lower = t.toLowerCase();
   const lc = ensureLittleChat(convo);
 
-  // Extract leap seeds (short clauses)
+  // Extract leap seeds + checklist steps from plan text
+  const stepsFromPlan = extractChecklistSteps(t);
   const leapBits = t
     .split(/[.\n;]+/)
     .map((s) => s.trim())
@@ -1667,12 +1814,33 @@ function littleChatReply(convo, userText) {
       unlocked = true;
     }
   }
-  // Cap leap memory
   if (lc.leaps.length > 12) lc.leaps = lc.leaps.slice(-12);
+
+  // Merge new steps into checklist (large plan view)
+  if (stepsFromPlan.length >= 2 || lc.craftMode) {
+    lc.craftMode = true;
+    if (stepsFromPlan.length >= 2) {
+      for (const s of stepsFromPlan) {
+        const key = s.toLowerCase();
+        if (!lc.checklist.some((c) => String(c.text).toLowerCase() === key)) {
+          lc.checklist.push({ id: uid("chk"), text: s, done: false });
+        }
+      }
+      if (lc.checklist.length > 12) lc.checklist = lc.checklist.slice(-12);
+      unlocked = true;
+    } else if (!lc.checklist.length) {
+      lc.checklist = defaultComplexChecklist(convo).map((text) => ({
+        id: uid("chk"),
+        text,
+        done: false,
+      }));
+    }
+  }
 
   const isLeap =
     unlocked ||
-    /\b(quantum|leap|unlock|complex|plan|phase|breakthrough|threshold|densify|next level|open the)\b/i.test(
+    lc.craftMode ||
+    /\b(quantum|leap|unlock|complex|plan|phase|breakthrough|threshold|densify|next level|open the|checklist|steps)\b/i.test(
       lower
     ) ||
     t.length >= 40;
@@ -1680,40 +1848,30 @@ function littleChatReply(convo, userText) {
   if (isLeap) {
     densenConstellationFromIntel(convo, unlocked ? 2 : 1);
     universeEvent("intel", { count: unlocked ? 2 : 1 });
-    syncFocusIntelligenceFile(
-      convo,
-      "QUANTUM_LEAP_PLAN",
-      t.slice(0, 1200)
-    );
+    syncFocusIntelligenceFile(convo, "QUANTUM_LEAP_PLAN", t.slice(0, 1200));
   }
 
-  const leapList =
-    lc.leaps.length > 0
-      ? lc.leaps
-          .slice(-4)
-          .map((l, i) => `${i + 1}. ${l}`)
-          .join("\n")
-      : "— none locked yet —";
-
   if (/\b(hello|hi|hey)\b/i.test(lower) && t.length < 24) {
-    return `Little chat for **${name}** (${ch}). State a **quantum leap plan** — direct, complex, what unlocks next for this nucleus. Main chat stays clean.`;
+    return `Little chat for **${name}** (${ch}). Use **Spells → Craft complex spell**, or paste a plan with steps — I'll build the **large checklist** that unlocks this nucleus.`;
   }
 
   if (unlocked || isLeap) {
+    const stepN = lc.checklist.length;
+    const doneN = lc.checklist.filter((s) => s.done).length;
     return [
-      `**Leap densened** for **${name}** (nucleus).`,
+      `**Complex plan densened** for **${name}** (nucleus).`,
+      stepN
+        ? `Checklist: **${doneN}/${stepN}** steps on the board above — tick them as you advance.`
+        : `State numbered steps to expand the checklist.`,
       unlocked
-        ? `Locked ${leapBits.length || 1} plan thread(s) into Focus intelligence.`
-        : `Plan held — keep sharpening the leap until it unlocks a concrete spell path.`,
+        ? `Locked plan thread(s) into Focus intelligence.`
+        : `Keep sharpening until the leap is falsifiable.`,
       ``,
-      `**Quantum leap threads on file:**`,
-      leapList,
-      ``,
-      `Next: refine the plan here, or **Cast Spell** in the main rail to forge the complex transmission against this densen.`,
+      `When ready: **Cast Spell** on the main rail to forge the complex transmission against this plan.`,
     ].join("\n");
   }
 
-  return `Heard on **${name}**. Little chat is for **quantum leap / complex spell plans** that unlock more for this Focus. Name the leap (what becomes true, what unlocks, one next move).`;
+  return `Heard on **${name}**. Little chat is for **complex spell / quantum leap plans**. Tap **Spells → Craft complex spell**, or list steps to build the checklist.`;
 }
 
 function sendLittleChatMessage(text) {
@@ -1750,7 +1908,7 @@ function sendLittleChatMessage(text) {
   setFocusUniverse(snap, { warp: false });
   updateUniverseHudChrome(snap);
   renderSpells();
-  toast("Little chat densened · Focus leap", "success");
+  toast("Complex plan densened · checklist updated", "success");
 }
 
 /** Persist + apply hide-chat / universe-only mode. */
@@ -4056,6 +4214,22 @@ els.littleChatInput?.addEventListener("keydown", (e) => {
 els.btnLittleChatToggle?.addEventListener("click", () => {
   const collapsed = !els.littleChat?.classList.contains("collapsed");
   setLittleChatCollapsed(collapsed);
+});
+
+// Spells title menu → Craft complex spell
+els.btnSpellsTitle?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = els.spellsTitleMenu?.hasAttribute("hidden");
+  setSpellsTitleMenuOpen(Boolean(open));
+});
+els.btnCraftComplexSpell?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  openCraftComplexSpell();
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest?.(".spells-title-wrap")) {
+    setSpellsTitleMenuOpen(false);
+  }
 });
 
 els.btnCast?.addEventListener("click", castSpell);
