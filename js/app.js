@@ -1390,23 +1390,32 @@ function updateUniverseHudChrome(snap) {
   const hud = getUniverseHud();
   const stageName = hud.stageName || snap?.stageName || "VOID";
   const starCount = hud.starCount || 0;
+  const densen =
+    hud.densenProgress != null
+      ? hud.densenProgress
+      : snap?.densenProgress != null
+        ? snap.densenProgress
+        : 0;
+  const densenPct = Math.round(Math.max(0, Math.min(1, densen)) * 100);
+  const ageLabel = hud.ageLabel || "";
   const convo = activeConvo();
   const health = convo ? computeFocusHealth(convo, state.spells) : null;
   if (els.universeHudCount) els.universeHudCount.textContent = String(starCount);
   if (els.universeHudStage) {
+    const densenBit = densenPct > 0 ? ` · densen ${densenPct}%` : "";
+    const ageBit = ageLabel ? ` · age ${ageLabel}` : "";
     const hpBit = health ? ` · ${healthHudChip(health)}` : "";
-    const updated = health?.lastRecalculated ? ` · updated ${new Date(health.lastRecalculated).toLocaleTimeString()}` : "";
-    els.universeHudStage.textContent = `${stageName}${hpBit}${updated}`;
+    els.universeHudStage.textContent = `${stageName}${densenBit}${ageBit}${hpBit}`;
   }
   if (els.universeHud) {
+    const temporal = `Stars fill as vault densens · densen ${densenPct}%${ageLabel ? ` · Focus age ${ageLabel}` : ""}`;
     els.universeHud.title = health
-      ? `${health.summary} — click for Intel Atlas / Healer health`
-      : "Intel Atlas";
+      ? `${health.summary} — ${temporal}`
+      : `Intel Atlas — ${temporal}`;
   }
   if (els.universeStage) {
-    const ch = snap?.focusId && convo ? `${getSealedChannel(convo)}` : "";
     els.universeStage.textContent = snap?.focusId
-      ? `${stageName}${health ? ` · HP ${health.hp}` : ""}${ch ? "" : ""}`
+      ? `${stageName}${densenPct ? ` · ${densenPct}%` : ""}${health ? ` · HP ${health.hp}` : ""}`
       : "VOID";
   }
 }
@@ -3553,6 +3562,7 @@ function createConversation({ name, type, archetype, model } = {}) {
     id = `${id}-${Date.now().toString(36).slice(-4)}`;
   }
 
+  const bornAt = Date.now();
   const messages = [];
   if (t === "ai") {
     const modelLine = sealed === "Open" ? "Open model" : sealed;
@@ -3579,6 +3589,7 @@ function createConversation({ name, type, archetype, model } = {}) {
     type: t,
     star: randomStarPosition(state.conversations),
     messages,
+    createdAt: bornAt,
   };
 
   applyFocusClassification(convo, {
@@ -3842,8 +3853,15 @@ persist();
 if (els.universeCanvas) {
   initUniverse(els.universeCanvas, {
     onHud: (info) => {
+      // Live star fill + temporal densen (age / vault progress)
       if (els.universeHudCount) els.universeHudCount.textContent = String(info.starCount || 0);
-      if (els.universeHudStage) els.universeHudStage.textContent = info.stageName || "VOID";
+      if (els.universeHudStage) {
+        const stageName = info.stageName || "VOID";
+        const densenPct = Math.round(Math.max(0, Math.min(1, info.densenProgress || 0)) * 100);
+        const densenBit = densenPct > 0 ? ` · densen ${densenPct}%` : "";
+        const ageBit = info.ageLabel ? ` · age ${info.ageLabel}` : "";
+        els.universeHudStage.textContent = `${stageName}${densenBit}${ageBit}`;
+      }
     },
   });
 }

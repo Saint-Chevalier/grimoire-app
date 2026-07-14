@@ -1517,6 +1517,17 @@ function migrateState(state) {
     state.activeId = state.conversations[0]?.id || "wizard-king-hermes";
   }
 
+  // Temporal densen: ensure every Focus has a birth time (from first message if needed)
+  for (const c of state.conversations || []) {
+    if (c.createdAt) continue;
+    let minTs = 0;
+    for (const m of c.messages || []) {
+      const t = Number(m.ts || m.createdAt || 0);
+      if (t && (!minTs || t < minTs)) minTs = t;
+    }
+    c.createdAt = minTs || Date.now();
+  }
+
   for (const s of state.spells || []) {
     if (isAlignmentSpell(s) && !s.kind) s.kind = "alignment";
     if (!s.kind) s.kind = "standard";
