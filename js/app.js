@@ -125,6 +125,7 @@ const els = {
   universeViewFocusIcon: $("#universe-view-focus-icon"),
   universeViewFocusName: $("#universe-view-focus-name"),
   universeViewFocusMeta: $("#universe-view-focus-meta"),
+  universeViewSystemLabels: $("#universe-view-system-labels"),
   btnCloseSpells: $("#btn-close-spells"),
   btnIntelFolder: $("#btn-intel-folder"),
   btnResetApp: $("#btn-reset-app"),
@@ -660,35 +661,23 @@ function renderChat() {
     return;
   }
 
-  let lastReceiptKind = null;
+  // System labels (frame held / receipt densen) only in universe view — never in AI chat
   convo.messages.forEach((m) => {
     if (m.kind === "focus-suggestion") return;
     if (m.role === "spell") return;
 
-    // Collapse silent inbound receipts into one grimoire note, not bubbles.
-    if (m.kind === "inbound-intel") {
-      const receipt = isHoldOrLoopReply(m.text)
-        ? "Frame held — not recast."
-        : isInboundNodeIntel(m.text)
-          ? "Node receipt densened — no new spell forged."
-          : "Inbound intel densened.";
-      if (lastReceiptKind !== "inbound-intel") {
-        const note = document.createElement("div");
-        note.className = "message system";
-        note.innerHTML = `
-          <div class="message-header message-role">System</div>
-          <div class="message-row"><div class="message-body">${escapeHtml(receipt)}</div></div>
-        `;
-        els.chatMessages.appendChild(note);
-        lastReceiptKind = "inbound-intel";
-      }
-      return;
-    }
-    lastReceiptKind = null;
+    // Inbound receipts → system labels (universe view chrome only)
+    if (m.kind === "inbound-intel") return;
+
+    // Explicit system-role messages stay out of chat UI
+    if (m.role === "system" || m.role === "System") return;
+
     els.chatMessages.appendChild(renderMessage(m));
   });
 
   els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  // Universe view chrome carries system labels when chat is hidden
+  updateUniverseSystemLabels(convo);
 }
 
 function renderMessage(m) {
@@ -698,7 +687,8 @@ function renderMessage(m) {
   } else if (m.role === "grimoire") {
     div.className = "message grimoire";
   } else {
-    div.className = "message system";
+    // System messages are not shown in AI chat (universe view only)
+    div.className = "message system system-chat-hidden";
   }
   const roleLabel =
     m.role === "user" ? "You" : m.role === "grimoire" ? "Grimoire" : "System";
@@ -716,6 +706,69 @@ function renderMessage(m) {
     <button type="button" class="copy-btn btn-copy-msg" data-msg-id="${escapeAttr(msgId)}" title="Copy message">Copy</button>
   `;
   return div;
+}
+
+/** Map inbound / system messages → short system labels for universe view only. */
+function systemLabelFromMessage(m) {
+  if (!m) return null;
+  if (m.kind === "inbound-intel") {
+    if (isHoldOrLoopReply(m.text)) return "System frame held — not recast";
+    if (isInboundNodeIntel(m.text)) return "Node receipt densened — no new spell forged";
+    return "Inbound intel densened";
+  }
+  if (m.role === "system" || m.role === "System") {
+    const t = String(m.text || "").replace(/\s+/g, " ").trim();
+    return t ? t.slice(0, 120) : "System";
+  }
+  return null;
+}
+
+/** Latest system labels for the active Focus (deduped, newest last). */
+function collectSystemLabels(convo, limit = 4) {
+  if (!convo) return [];
+  const out = [];
+  let lastInbound = null;
+  for (const m of convo.messages || []) {
+    if (m.kind === "inbound-intel") {
+      const label = systemLabelFromMessage(m);
+      if (label && label !== lastInbound) {
+        out.push(label);
+        lastInbound = label;
+      }
+      continue;
+    }
+    lastInbound = null;
+    const label = systemLabelFromMessage(m);
+    if (label) out.push(label);
+  }
+  return out.slice(-limit);
+}
+
+/**
+ * System labels live only in universe view (chat hidden).
+ * Never shown as chat bubbles while AI chat is visible.
+ */
+function updateUniverseSystemLabels(convo) {
+  const host = els.universeViewSystemLabels || document.getElementById("universe-view-system-labels");
+  if (!host) return;
+  if (!state.universeView) {
+    host.innerHTML = "";
+    host.hidden = true;
+    return;
+  }
+  const labels = collectSystemLabels(convo || activeConvo());
+  if (!labels.length) {
+    host.innerHTML = "";
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  host.innerHTML = labels
+    .map(
+      (label) =>
+        `<span class="universe-system-label" title="${escapeAttr(label)}">${escapeHtml(label)}</span>`
+    )
+    .join("");
 }
 
 const MAX_IMAGES_PER_SEND = 9;
@@ -1530,6 +1583,8 @@ function applyUniverseViewMode() {
     const arch = ARCHETYPES[convo.archetype];
     els.universeViewFocusIcon.textContent = arch?.icon || "☉";
   }
+  // System labels (frame held, receipt densen) only when chat is hidden
+  updateUniverseSystemLabels(convo);
 }
 
 function toggleUniverseView() {
@@ -1651,13 +1706,17 @@ function sendMessage(text) {
     renderSpells();
     renderIntelAtlas(convo);
 
-    const receipt =
-      ingested?.alignmentJustLocked ?
-        "Alignment reply received — spellcraft unlocked."
-      : isHoldOrLoopReply(userText) ?
-        "Node receipt densened — frame held, not recast."
-      : "Inbound intel densened — no new spell forged.";
-    toast(receipt, "");
+    // System frame / receipt labels: universe view only (never pollute AI chat)
+    if (state.universeView) {
+      const receipt =
+        ingested?.alignmentJustLocked
+          ? "Alignment reply received — spellcraft unlocked."
+          : isHoldOrLoopReply(userText)
+            ? "System frame held — not recast"
+            : "Node receipt densened — no new spell forged";
+      toast(receipt, "");
+      updateUniverseSystemLabels(convo);
+    }
     return;
   }
 
