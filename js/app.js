@@ -1558,7 +1558,12 @@ function spellTypeForFocus(convo, spell) {
 }
 
 function renderAll() {
-  els.app.classList.toggle("spells-collapsed", !state.spellsOpen);
+  // Keep panel class + toggle button in sync with state
+  const appEl = els.app || document.querySelector(".app");
+  if (appEl) appEl.classList.toggle("spells-collapsed", !state.spellsOpen);
+  if (els.btnToggleSpells) {
+    els.btnToggleSpells.setAttribute("aria-expanded", state.spellsOpen ? "true" : "false");
+  }
   applyUniverseViewMode();
   renderConvoList();
   renderChat();
@@ -1615,8 +1620,7 @@ function openCraftComplexSpell() {
   }
 
   // Spells panel can stay open; craft UI is the modal (no bottom cut-off)
-  state.spellsOpen = true;
-  els.app?.classList.remove("spells-collapsed");
+  setSpellsOpen(true);
 
   const lc = ensureLittleChat(convo);
   lc.craftMode = true;
@@ -3318,8 +3322,8 @@ function commitSpell(convo, spell, { silentToast = false } = {}) {
   // Always enforce curiosity hard cap after any commit
   if (isCuriositySpell(spell)) enforceCuriosityCap(convo);
 
-  if (!state.spellsOpen) {
-    state.spellsOpen = true;
+  if (!state.spellsOpen || isSpellsVisuallyCollapsed()) {
+    setSpellsOpen(true);
   }
 
   persist();
@@ -3934,9 +3938,8 @@ function castSpell() {
     ts: Date.now(),
   });
 
-  if (!state.spellsOpen) {
-    state.spellsOpen = true;
-    els.app?.classList.remove("spells-collapsed");
+  if (!state.spellsOpen || isSpellsVisuallyCollapsed()) {
+    setSpellsOpen(true);
   }
 
   persist();
@@ -4242,26 +4245,66 @@ els.newType?.addEventListener("change", () => {
   syncNewFocusFormChrome();
 });
 
-function toggleSpells() {
-  state.spellsOpen = !state.spellsOpen;
-  persist();
+/**
+ * Single source of truth for Spells panel open/collapsed.
+ * Always syncs state + .spells-collapsed class (prevents reopen desync).
+ */
+function setSpellsOpen(open) {
+  state.spellsOpen = Boolean(open);
   const appEl = els.app || document.querySelector(".app");
   if (appEl) {
-    // Collapses only .spells-panel via CSS; chat stays intact
     appEl.classList.toggle("spells-collapsed", !state.spellsOpen);
+  }
+  if (els.btnToggleSpells) {
+    els.btnToggleSpells.setAttribute("aria-expanded", state.spellsOpen ? "true" : "false");
+    els.btnToggleSpells.title = state.spellsOpen
+      ? "Spells open — tap to switch Active / Cast History (Shift+tap to collapse)"
+      : "Open Spells panel";
+    els.btnToggleSpells.setAttribute(
+      "aria-label",
+      state.spellsOpen ? "Spells panel open" : "Open Spells panel"
+    );
+  }
+  try {
+    persist();
+  } catch {
+    /* ignore */
+  }
+  if (state.spellsOpen) {
+    renderSpells();
+    if (typeof renderLittleChat === "function") renderLittleChat();
   }
 }
 
+function toggleSpells() {
+  setSpellsOpen(!state.spellsOpen);
+}
+
+function isSpellsVisuallyCollapsed() {
+  const appEl = els.app || document.querySelector(".app");
+  return Boolean(appEl?.classList.contains("spells-collapsed"));
+}
+
 els.btnToggleSpells?.addEventListener("click", (e) => {
-  // With panel already open: cycle Active ↔ Cast History (tap icon again)
-  if (state.spellsOpen && !e.shiftKey) {
-    setSpellView(ensureSpellView() === "active" ? "history" : "active");
+  e.preventDefault();
+  e.stopPropagation();
+  // Force reopen when collapsed (state can desync if only spellsOpen was flipped)
+  if (!state.spellsOpen || isSpellsVisuallyCollapsed()) {
+    setSpellsOpen(true);
     return;
   }
-  toggleSpells();
+  // Shift+tap collapses when open
+  if (e.shiftKey) {
+    setSpellsOpen(false);
+    return;
+  }
+  // Open: cycle Active ↔ Cast History
+  setSpellView(ensureSpellView() === "active" ? "history" : "active");
 });
-els.btnCloseSpells?.addEventListener("click", () => {
-  if (state.spellsOpen) toggleSpells();
+els.btnCloseSpells?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setSpellsOpen(false);
 });
 els.tabSpellsActive?.addEventListener("click", () => setSpellView("active"));
 els.tabSpellsHistory?.addEventListener("click", () => setSpellView("history"));
@@ -4364,8 +4407,7 @@ function resetApp() {
   state.conversations = [];
   state.spells = [];
   state.activeId = null;
-  state.spellsOpen = true;
-  els.app?.classList.remove("spells-collapsed");
+  setSpellsOpen(true);
   persist();
   renderAll();
   toast("App reset — fresh start", "success");
@@ -4434,7 +4476,8 @@ els.universeHud?.addEventListener("click", () => {
 });
 els.btnAtlasClose?.addEventListener("click", () => setAtlasOpen(false));
 
-if (!state.spellsOpen) els.app.classList.add("spells-collapsed");
+// Sync Spells panel class + reopen button labels from saved state
+setSpellsOpen(Boolean(state.spellsOpen));
 applySidebarCollapsed(loadSidebarCollapsed());
 applyUniverseViewMode();
 // Silent merge of kind+purpose duplicates on load

@@ -1636,6 +1636,22 @@ body.universe-view-active {
   flex-shrink: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
+  position: relative;
+  z-index: 6;
+  pointer-events: auto;
+}
+
+/* Spells reopen control must stay clickable when panel is collapsed */
+#btn-toggle-spells {
+  position: relative;
+  z-index: 7;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#btn-toggle-spells[aria-expanded="false"] {
+  border-color: rgba(167, 139, 250, 0.45);
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.2);
 }
 
 .type-select-wrap {
@@ -2523,15 +2539,24 @@ body.universe-view-active .message.system {
 }
 
 .app.spells-collapsed .spells-panel {
-  flex: 0 0 0;
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  padding: 0;
-  overflow: hidden;
-  border: none;
+  flex: 0 0 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  border: none !important;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: none !important;
+  visibility: hidden;
+}
+
+/* When open, force panel visible (reopen recovery) */
+.app:not(.spells-collapsed) .spells-panel {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .spells-header {
