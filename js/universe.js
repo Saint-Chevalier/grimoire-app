@@ -247,23 +247,30 @@ function starFieldTargets(snapshot) {
   const ageMs = snapshot.ageMs || 0;
   // +1 deep star every ~4h of Focus life, soft-capped
   const ageBoost = Math.min(90, Math.floor(ageMs / (4 * 3600000)));
+  // FORCE floor: always a visible outer-space field on load (never empty void)
   const deepField = Math.min(
     MAX_DEEP_FIELD,
-    Math.floor(24 + densen * 160 + ageBoost * 0.55 + (snapshot.intelCount || 0) * 1.2)
+    Math.max(
+      110,
+      Math.floor(90 + densen * 130 + ageBoost * 0.55 + (snapshot.intelCount || 0) * 1.2)
+    )
   );
   const intelStars = Math.min(
     MAX_ANIM_STARS,
-    Math.floor(
-      12 +
-        densen * 140 +
-        (snapshot.intelCount || 0) * 7 +
-        (snapshot.spellsTotal || 0) * 2.5 +
-        (snapshot.spellsSent || 0) * 2 +
-        ageBoost * 0.35
+    Math.max(
+      48,
+      Math.floor(
+        36 +
+          densen * 140 +
+          (snapshot.intelCount || 0) * 7 +
+          (snapshot.spellsTotal || 0) * 2.5 +
+          (snapshot.spellsSent || 0) * 2 +
+          ageBoost * 0.35
+      )
     )
   );
   // Fraction of intel stars that scatter full-sky (outer space) vs nucleus orbit
-  const fieldMix = 0.25 + densen * 0.55;
+  const fieldMix = 0.45 + densen * 0.4;
   return { deepField, intelStars, fieldMix, densen };
 }
 
@@ -303,42 +310,35 @@ function buildUniverse(snapshot) {
     });
   }
 
-  // Deep-field stars — full-sky outer space (grows with densen + age)
+  // Deep-field stars — full-sky outer space, ALL visible immediately on load
   const staticStars = [];
   for (let i = 0; i < targets.deepField; i++) {
-    // Slight edge bias so center stays for nucleus / sun
-    const edge = rng() > 0.35;
-    let x = rng();
-    let y = rng();
-    if (!edge) {
-      const ang = rng() * Math.PI * 2;
-      const dist = 0.15 + rng() * 0.45;
-      x = 0.5 + Math.cos(ang) * dist;
-      y = 0.48 + Math.sin(ang) * dist * 0.78;
-      x = Math.max(0.02, Math.min(0.98, x));
-      y = Math.max(0.02, Math.min(0.98, y));
-    }
+    // Full-sky scatter (user in outer space)
+    const x = rng();
+    const y = rng();
     staticStars.push({
       x,
       y,
-      r: 0.45 + rng() * (0.9 + densen * 0.6),
-      a: 0.12 + rng() * (0.22 + densen * 0.2),
+      r: 0.55 + rng() * (1.1 + densen * 0.7),
+      // Force-readable alpha even at densen 0
+      a: 0.35 + rng() * (0.45 + densen * 0.15),
       tw: rng() * Math.PI * 2,
       layer: 1,
-      // Gradual reveal index — tick fades them in by densen
-      birth: i / Math.max(1, targets.deepField),
+      birth: 0, // never hide by densen gate
+      spawn: 0,
     });
   }
 
-  // Intel stars — mix of nucleus orbit + full-sky field fill
+  // Intel stars — seed MOST immediately so sky is full on first frame
   const stars = [];
-  // On first paint, seed a fraction immediately; rest fill via tick (gradual)
   const seedCount = Math.min(
     targets.intelStars,
-    Math.max(8, Math.floor(targets.intelStars * (0.35 + densen * 0.25)))
+    Math.max(40, Math.floor(targets.intelStars * (0.75 + densen * 0.2)))
   );
   for (let i = 0; i < seedCount; i++) {
-    stars.push(makeIntelStar(rng, i, targets.fieldMix, densen, i === seedCount - 1 ? 0.2 : 0));
+    // First wave settled (visible now); last few spawn-fade for life
+    const spawn = i > seedCount - 6 ? 0.35 : 0;
+    stars.push(makeIntelStar(rng, i, targets.fieldMix, densen, spawn));
   }
 
   // Planets from directives (max 8)
@@ -420,12 +420,12 @@ function buildUniverse(snapshot) {
     sun,
     time: 0,
     palette,
-    // Temporal densen state
+    // Temporal densen state — start at target so field is not gated on load
     createdAt: snapshot.createdAt || 0,
     ageMs: snapshot.ageMs || 0,
     vaultBits: snapshot.vaultBits || 0,
-    densenProgress: densen * 0.55, // start mid-chase so stars fill in on screen
-    targetDensen: densen,
+    densenProgress: Math.max(0.35, densen),
+    targetDensen: Math.max(0.35, densen),
     starTarget: targets.intelStars,
     deepFieldTarget: targets.deepField,
     fieldMix: targets.fieldMix,
@@ -456,8 +456,9 @@ function makeIntelStar(rng, index, fieldMix, densen, spawn = 1) {
   return {
     x,
     y,
-    r: (fullField ? 0.7 : 1.1) + rng() * (1.2 + densen * 0.8),
-    a: 0.4 + rng() * (0.4 + densen * 0.15),
+    r: (fullField ? 0.85 : 1.2) + rng() * (1.4 + densen * 0.9),
+    // Force-visible on black — never near-invisible
+    a: 0.55 + rng() * (0.4 + densen * 0.1),
     hue: rng(),
     tw: rng() * Math.PI * 2,
     spawn,
@@ -654,6 +655,25 @@ function tickUniverse(u, dt) {
   }
 }
 
+/** Deterministic fallback starfield when no Focus universe is loaded. */
+function drawForceVoidStars(w, h, px, py, t) {
+  const rng = makeRng(0x53544152); // "STAR"
+  ctx.save();
+  ctx.translate(px * 0.4, py * 0.4);
+  for (let i = 0; i < 140; i++) {
+    const x = rng() * w;
+    const y = rng() * h;
+    const r = 0.6 + rng() * 1.4;
+    const tw = 0.65 + 0.35 * Math.sin(t * 1.1 + rng() * 10);
+    const a = (0.35 + rng() * 0.5) * tw;
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(230,235,255,${a})`;
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function draw() {
   if (!ctx || !canvas) return;
   const w = window.innerWidth;
@@ -671,6 +691,8 @@ function draw() {
     : 0.5;
 
   if (!uni) {
+    // Fallback void starfield — never pure black even before Focus loads
+    drawForceVoidStars(w, h, px, py, performance.now() / 1000);
     drawWarpOverlay(w, h);
     return;
   }
@@ -712,22 +734,18 @@ function draw() {
   }
   ctx.restore();
 
-  // Deep-field outer space — full-sky stars, revealed by densen/age
+  // Deep-field outer space — ALWAYS paint full sky (no densen culling)
   ctx.save();
   ctx.translate(px * 0.45, py * 0.45);
-  const densenVis = u.densenProgress != null ? u.densenProgress : 0;
+  const densenVis = u.densenProgress != null ? u.densenProgress : 0.35;
   for (const s of u.staticStars) {
-    // birth threshold: denser cosmos reveals farther stars
-    const birth = s.birth != null ? s.birth : 0;
-    if (birth > densenVis + 0.08 && densenVis < 0.95) continue;
-    const reveal =
-      s.spawn > 0 ? 1 - s.spawn : birth <= densenVis ? 1 : Math.max(0, 1 - (birth - densenVis) * 8);
-    if (reveal <= 0.02) continue;
-    const tw = 0.65 + 0.35 * Math.sin(u.time * 1.15 + s.tw);
-    const a = s.a * tw * brightness * reveal * (0.55 + densenVis * 0.55);
+    const spawnFade = s.spawn > 0 ? 0.45 + (1 - s.spawn) * 0.55 : 1;
+    const tw = 0.7 + 0.3 * Math.sin(u.time * 1.15 + s.tw);
+    // Floor alpha so stars never vanish into black
+    const a = Math.max(0.22, s.a * tw * brightness * spawnFade * (0.75 + densenVis * 0.35));
     ctx.beginPath();
-    ctx.fillStyle = `rgba(220,225,255,${a})`;
-    ctx.arc(s.x * w, s.y * h, s.r * (0.85 + densenVis * 0.25), 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(230,235,255,${a})`;
+    ctx.arc(s.x * w, s.y * h, s.r * (0.95 + densenVis * 0.2), 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
@@ -745,24 +763,27 @@ function draw() {
   }
   ctx.restore();
 
-  // Intel stars (layer 2)
+  // Intel stars (layer 2) — force-visible outer-space field
   ctx.save();
   ctx.translate(px * 0.85, py * 0.85);
   for (const s of u.stars) {
-    const spawnBoost = s.spawn > 0 ? 1 + s.spawn * 2.5 : 1;
+    const spawnBoost = s.spawn > 0 ? 1 + s.spawn * 2.2 : 1;
     const tw = 0.75 + 0.25 * Math.sin(u.time * 2 + s.tw);
-    const alpha = Math.min(1, s.a * tw * brightness * (s.spawn > 0 ? 0.4 + (1 - s.spawn) : 1));
+    const alpha = Math.max(
+      0.28,
+      Math.min(1, s.a * tw * brightness * (s.spawn > 0 ? 0.55 + (1 - s.spawn) * 0.45 : 1))
+    );
     const r = s.r * spawnBoost;
     const x = s.x * w;
     const y = s.y * h;
     if (s.spawn > 0) {
       ctx.beginPath();
-      ctx.fillStyle = `rgba(255,255,255,${0.35 * s.spawn})`;
+      ctx.fillStyle = `rgba(255,255,255,${0.4 * s.spawn})`;
       ctx.arc(x, y, r * 3, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.beginPath();
-    ctx.fillStyle = `rgba(230,235,255,${alpha})`;
+    ctx.fillStyle = `rgba(240,242,255,${alpha})`;
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
   }
@@ -899,23 +920,46 @@ function drawWarpOverlay(w, h) {
 
 /**
  * Switch / rebuild universe for a focus snapshot.
+ * Always builds a starfield — even for empty/void snapshot (outer space on load).
  */
 export function setFocusUniverse(snapshot, { warp = true } = {}) {
   const now = performance.now();
   const rapid = now - lastSwitchAt < 350;
   lastSwitchAt = now;
 
-  const next = snapshot?.focusId ? buildUniverse(snapshot) : null;
+  // Force: never leave uni null after first call — void still has a sky
+  const snap =
+    snapshot?.focusId
+      ? snapshot
+      : {
+          focusId: "__void__",
+          name: "",
+          intelCount: 0,
+          imageCount: 0,
+          pulseCount: 0,
+          signal: 5,
+          aligned: false,
+          directives: 0,
+          spellsTotal: 0,
+          spellsSent: 0,
+          spellsReady: 0,
+          createdAt: Date.now(),
+          ageMs: 0,
+          vaultBits: 0,
+          densenProgress: 0.35,
+        };
+  const next = buildUniverse(snap);
   const same = uni && next && uni.focusId === next.focusId;
 
   if (same) {
     // Soft rebuild — preserve transient effects, refresh counts
-    applySnapshotDiff(uni, snapshot, next);
+    applySnapshotDiff(uni, snap, next);
     emitHud();
+    startLoop();
     return uni;
   }
 
-  if (warp && !rapid && uni && next) {
+  if (warp && !rapid && uni && next && uni.focusId !== "__void__" && next.focusId !== "__void__") {
     warpT = 0.001;
     // swap at midpoint of warp
     setTimeout(() => {
@@ -928,6 +972,7 @@ export function setFocusUniverse(snapshot, { warp = true } = {}) {
     checkStageFlash(next);
   }
   emitHud();
+  startLoop();
   return uni;
 }
 
@@ -944,9 +989,11 @@ function applySnapshotDiff(u, snap, rebuilt) {
   u.vaultBits = snap.vaultBits || 0;
   u._spellsTotal = snap.spellsTotal || 0;
   u._spellsSent = snap.spellsSent || 0;
-  // Target densen rises with vault; visual fill chases in tick
-  u.targetDensen = snap.densenProgress != null ? snap.densenProgress : u.targetDensen || 0;
+  // Target densen rises with vault; floor keeps sky lit on every Focus
+  const rawD = snap.densenProgress != null ? snap.densenProgress : u.targetDensen || 0;
+  u.targetDensen = Math.max(0.35, rawD);
   if (u.densenProgress == null) u.densenProgress = u.targetDensen;
+  else u.densenProgress = Math.max(u.densenProgress, 0.35);
 
   const targets = starFieldTargets(snap);
   u.starTarget = targets.intelStars;

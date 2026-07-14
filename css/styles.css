@@ -85,10 +85,13 @@ button {
   inset: 0;
   width: 100%;
   height: 100%;
-  z-index: -1;
+  /* Above body black, under UI chrome — must never sit behind opaque shell */
+  z-index: 0;
   pointer-events: none;
   display: block;
   background: #000000;
+  opacity: 1;
+  visibility: visible;
 }
 
 /* Legacy DOM starfield (unused when canvas is live) */
@@ -775,7 +778,8 @@ button {
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background: #000000;
+  /* Transparent so universe canvas (outer space) shows through center */
+  background: transparent;
 }
 
 /* ─── Sidebar — 250px expand / 48px rail collapse ─── */

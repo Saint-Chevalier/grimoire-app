@@ -1467,12 +1467,18 @@ function renderAll() {
 // ─── Actions ───
 
 function selectConvo(id) {
-  if (state.activeId === id) return;
+  if (state.activeId === id) {
+    // Force re-render of this Focus sky even on re-tap
+    const snap = deriveFocusSnapshot(activeConvo(), state.spells);
+    setFocusUniverse(snap, { warp: false });
+    updateUniverseHudChrome(snap);
+    return;
+  }
   state.activeId = id;
   const convo = activeConvo();
   if (convo) ensureAlignmentDirective(convo);
   persist();
-  // Warp to this Focus's universe
+  // Warp to this Focus's universe — always paint starfield for this Focus
   const snap = deriveFocusSnapshot(convo, state.spells);
   setFocusUniverse(snap, { warp: true });
   // Auto-generate self/user curiosity spells about linked ecosystem nodes
@@ -3849,7 +3855,7 @@ state.conversations.forEach((c) => {
 });
 persist();
 
-// Universe Engine — canvas cosmos behind HUD
+// Universe Engine — canvas cosmos behind HUD (force starfield on boot)
 if (els.universeCanvas) {
   initUniverse(els.universeCanvas, {
     onHud: (info) => {
@@ -3864,6 +3870,8 @@ if (els.universeCanvas) {
       }
     },
   });
+  // Immediate void sky before Focus snapshot — never black frame
+  setFocusUniverse(null, { warp: false });
 }
 
 els.universeHud?.addEventListener("click", () => {
