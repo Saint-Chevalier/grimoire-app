@@ -1644,7 +1644,7 @@ function littleChatReply(convo, userText) {
 
   const isLeap =
     unlocked ||
-    /\b(quantum|leap|unlock|complex|plan|phase|breakthrough|threshold|densify|densify|densify|next level|open the)\b/i.test(
+    /\b(quantum|leap|unlock|complex|plan|phase|breakthrough|threshold|densify|next level|open the)\b/i.test(
       lower
     ) ||
     t.length >= 40;
