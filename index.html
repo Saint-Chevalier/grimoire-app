@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Grimoire — Constellation</title>
+  <link rel="icon" type="image/jpeg" href="assets/grimoire-icon.jpg" />
+  <title>Grimoire — Constellation Codex</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -35,6 +36,7 @@
             <h1>Grimoire</h1>
             <p class="brand-sub">Constellation Codex</p>
           </div>
+          <button type="button" class="btn-app-settings-icon" id="btn-app-settings" title="App settings and roadmap" aria-label="Open app settings">⚙</button>
           <button type="button" class="btn-reset-app" id="btn-reset-app" title="Reset app — clears all saved data" aria-label="Reset app">↺</button>
         </div>
         <button type="button" class="btn-intel-folder" id="btn-intel-folder" title="Choose Intelligence Folder">
@@ -185,6 +187,37 @@
         <span class="atlas-economy">☉ align · ★ intel · ♃ directives · ☄ spells · ✦ sent</span>
         <button type="button" class="btn-export-focus" id="btn-export-focus" title="Copy Focus dossier">Copy Focus</button>
       </footer>
+    </div>
+  </div>
+
+  <!-- App settings / pages / roadmap anchor -->
+  <div id="app-settings-panel" class="settings-panel" hidden role="dialog" aria-label="App settings">
+    <div class="settings-modal">
+      <header class="settings-header">
+        <strong>App Settings</strong>
+        <button type="button" class="settings-close" id="btn-app-settings-close" aria-label="Close">×</button>
+      </header>
+      <div class="settings-body">
+        <p class="settings-sub">This is the upgrade anchor for future tabs, pages, and operator settings.</p>
+        <div class="settings-grid">
+          <div class="settings-card">
+            <strong>General</strong>
+            <span class="settings-meta">Identity, vault folder, default model</span>
+          </div>
+          <div class="settings-card">
+            <strong>Spells</strong>
+            <span class="settings-meta">Priority rules, copy format, auto-forge</span>
+          </div>
+          <div class="settings-card">
+            <strong>Tabs</strong>
+            <span class="settings-meta">Future upgrade surface — reserved</span>
+          </div>
+          <div class="settings-card">
+            <strong>Roadmap</strong>
+            <span class="settings-meta">Public build status and sealed changelog</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

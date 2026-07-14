@@ -68,6 +68,25 @@ const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 
 const state = loadState();
 
+// Runtime purge for stale removed focuses that may still exist in saved state.
+(function purgeRemovedFocuses() {
+  const removedIds = new Set(["misty-discord"]);
+  const before = state.conversations.length;
+  state.conversations = state.conversations.filter((c) => !removedIds.has(c.id));
+  const removed = before - state.conversations.length;
+  if (removed > 0) {
+    state.spells = (state.spells || []).filter((s) => !removedIds.has(s.conversationId));
+    if (state.activeId && state.conversations.find((c) => c.id === state.activeId)) {
+      // keep active if still valid
+    } else if (state.conversations.length) {
+      state.activeId = state.conversations[0].id;
+    } else {
+      state.activeId = null;
+    }
+    persist();
+  }
+})();
+
 // ─── DOM ───
 
 const $ = (sel) => document.querySelector(sel);
@@ -122,6 +141,9 @@ const els = {
   newModel: $("#new-entity-model"),
   newFocusHint: $("#new-focus-hint"),
   btnCancelNew: $("#btn-cancel-new"),
+  appSettingsPanel: $("#app-settings-panel"),
+  btnAppSettings: $("#btn-app-settings"),
+  btnAppSettingsClose: $("#btn-app-settings-close"),
   toast: $("#toast"),
 };
 
