@@ -901,8 +901,8 @@ function renderSpells() {
     list.forEach((spell) => {
       const item = document.createElement("article");
       const showSelf = shouldShowSelfCastButton(spell, convo);
-      // Keep kind stamped so label + button stay aligned after refresh
-      if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell)) {
+      // Only stamp true self-cast protocol cards (never curiosity / blanket Focus)
+      if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell) && !isCuriositySpell(spell)) {
         spell.kind = "self-cast";
       }
       item.className = "spell-item spell-history" + (showSelf ? " spell-self-castable" : "");
@@ -948,7 +948,7 @@ function renderSpells() {
     const item = document.createElement("article");
     const isSent = spell.status === "sent";
     const showSelf = shouldShowSelfCastButton(spell, convo);
-    if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell)) {
+    if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell) && !isCuriositySpell(spell)) {
       spell.kind = "self-cast";
     }
     item.className =
@@ -1031,6 +1031,7 @@ function resolveSpellFocus(spell, fallback) {
  * even when older localStorage cards still say kind: "directive".
  */
 function shouldShowSelfCastButton(spell, convo) {
+  if (!spell || isCuriositySpell(spell) || isAlignmentSpell(spell)) return false;
   const focus = resolveSpellFocus(spell, convo);
   if (isSelfCastSpell(spell, focus)) return true;
   try {
@@ -2164,6 +2165,12 @@ function linkedCuriosityNote(convo, userText) {
 
 const CURIOSITY_SELF_PURPOSE = "CURIOSITY · Self — ecosystem links";
 const CURIOSITY_USER_PURPOSE = "CURIOSITY · User — ecosystem links";
+/** Hard cap: only Self + User curiosity ready per Focus */
+const MAX_CURIOSITY_READY = 2;
+/** Hard cap: ready self-cast inject cards (not curiosity) per Focus */
+const MAX_READY_SELF_CAST = 2;
+/** Linked-intel signature cache — skip rebuild when ecosystem map unchanged */
+const curiositySigByFocus = new Map();
 
 function isCuriositySpell(spell) {
   if (!spell) return false;
@@ -2172,11 +2179,74 @@ function isCuriositySpell(spell) {
   return /^CURIOSITY\s*[·.]\s*(Self|User)\b/i.test(p);
 }
 
+function curiosityModeOf(spell) {
+  if (!spell) return null;
+  if (spell.curiosityMode === "self" || spell.curiosityMode === "user") return spell.curiosityMode;
+  const p = String(spell.purpose || "");
+  if (/CURIOSITY\s*[·.]\s*Self\b/i.test(p)) return "self";
+  if (/CURIOSITY\s*[·.]\s*User\b/i.test(p)) return "user";
+  return null;
+}
+
+/** Ready curiosity spells for a Focus, keyed by mode (at most one each after prune). */
+function readyCuriosityByMode(convoId) {
+  const ready = (state.spells || []).filter(
+    (s) => s.conversationId === convoId && s.status !== "sent" && isCuriositySpell(s)
+  );
+  const by = { self: null, user: null };
+  for (const s of ready) {
+    const mode = curiosityModeOf(s);
+    if (mode !== "self" && mode !== "user") continue;
+    // Keep newest per mode
+    if (!by[mode] || (s.createdAt || 0) >= (by[mode].createdAt || 0)) {
+      by[mode] = s;
+    }
+  }
+  return by;
+}
+
+/**
+ * Enforce max 2 ready curiosity spells per Focus (Self + User only).
+ * Drops stray / duplicate curiosity cards.
+ */
+function enforceCuriosityCap(convo) {
+  if (!convo) return 0;
+  const by = readyCuriosityByMode(convo.id);
+  const keepIds = new Set([by.self?.id, by.user?.id].filter(Boolean));
+  let removed = 0;
+  state.spells = (state.spells || []).filter((s) => {
+    if (s.conversationId !== convo.id || s.status === "sent" || !isCuriositySpell(s)) {
+      return true;
+    }
+    if (keepIds.has(s.id)) return true;
+    removed += 1;
+    return false;
+  });
+  return removed;
+}
+
+function linkedIntelSignature(convo) {
+  return gatherLinkedNodeIntel(convo)
+    .map((n) => `${n.focusId}:${n.summary}`)
+    .join("|");
+}
+
+function readySelfCastCount(convo) {
+  if (!convo) return 0;
+  return (state.spells || []).filter(
+    (s) =>
+      s.conversationId === convo.id &&
+      s.status !== "sent" &&
+      !isCuriositySpell(s) &&
+      !isAlignmentSpell(s) &&
+      isSelfCastSpell(s, convo)
+  ).length;
+}
+
 /**
  * Build one auto-generated curiosity spell.
- * mode "self" = Focus self-curious about linked nodes
- * mode "user" = user-curious map for the operator
- * Both always name Focus as nucleus and how it interacts with each node.
+ * mode "self" | "user" — only these two exist per Focus.
+ * Body always names Focus as NUCLEUS and how each link ties back.
  */
 function buildCuriositySpell(convo, mode, medium) {
   if (!convo) return null;
@@ -2193,8 +2263,8 @@ function buildCuriositySpell(convo, mode, medium) {
     return [
       `${i + 1}. LINKED NODE: ${n.name} · ${n.channel} (${n.type})`,
       `   Intel: ${n.summary}`,
-      `   Interaction with nucleus (${convo.name}): ${n.why}`,
-      `   Tie-back: what from ${n.name} densens ${convo.name}, and why it is important here.`,
+      `   Orbit of nucleus **${convo.name}**: ${n.why}`,
+      `   TIE-BACK TO NUCLEUS: what from ${n.name} densens **${convo.name}**, and why it is important *here* (not there).`,
     ].join("\n");
   });
 
@@ -2204,22 +2274,22 @@ function buildCuriositySpell(convo, mode, medium) {
         "",
         "TRANSMISSION TYPE: SELF-CURIOUS ECOSYSTEM PROBE",
         "AUTHORITY: Operator · Focus-as-nucleus",
-        `NUCLEUS FOCUS: ${nucleus}`,
+        `NUCLEUS FOCUS (sun): ${nucleus}`,
         `MEDIUM: ${med}`,
-        "SCOPE: You are the sun. Linked nodes orbit you — do not abandon this channel.",
+        "LAW: This Focus is the sun/nucleus. All linked intelligence orbits it. Do not abandon this channel.",
         "",
-        "INTERACTION MAP (how this Focus meets other intelligence):",
+        `HOW **${convo.name}** INTERACTS WITH LINKED NODES:`,
         ...mapLines,
         "",
-        "OPERATIONAL ASK (self-curious):",
-        `From inside **${convo.name}**, examine the linked nodes above.`,
+        "OPERATIONAL ASK (self-curious · nucleus-first):",
+        `From inside **${convo.name}** as sun/nucleus, examine the linked nodes above.`,
         "Return:",
-        "1. Interaction pattern — how each node currently relates to this nucleus",
-        "2. Useful densen — what signal to absorb into this Focus (and why)",
-        "3. Boundary — what to leave on the other node (no wander, no channel abandon)",
-        "4. One next move that serves **this Focus only** while using linked intel",
+        `1. Interaction pattern — how each node currently relates to **${convo.name}**`,
+        `2. Useful densen — what signal to absorb into **${convo.name}** and why it strengthens the nucleus`,
+        "3. Boundary — what stays on the other node (no wander, no channel abandon)",
+        `4. One next move that serves **${convo.name} only** while using linked intel`,
         "",
-        "Keep sovereign, precise, nucleus-first.",
+        "Every answer ties back to the nucleus. Keep sovereign, precise.",
         "",
         "— Operator",
       ].join("\n")
@@ -2228,22 +2298,22 @@ function buildCuriositySpell(convo, mode, medium) {
         "",
         "TRANSMISSION TYPE: USER-CURIOUS ECOSYSTEM BRIEF",
         "AUTHORITY: Operator · Focus-as-nucleus",
-        `NUCLEUS FOCUS: ${nucleus}`,
+        `NUCLEUS FOCUS (sun): ${nucleus}`,
         `MEDIUM: ${med}`,
-        "SCOPE: Operator map — all links explain why they matter to this Focus.",
+        "LAW: Operator map — every link is explained only by how it serves this Focus.",
         "",
-        "ECOSYSTEM NODES (orbiting the nucleus):",
+        `ECOSYSTEM ORBITING **${convo.name}** (nucleus):`,
         ...mapLines,
         "",
-        "OPERATIONAL ASK (user-curious):",
+        "OPERATIONAL ASK (user-curious · nucleus-first):",
         `Help the operator see the ecosystem *through* **${convo.name}** as sun/nucleus.`,
         "Return:",
-        "1. Rank linked nodes by value to this Focus right now",
-        "2. How the operator should route attention (cast / densen / wait)",
-        "3. One user action that compounds **this Focus** using another node's intel",
-        "4. One risk if the nucleus is forgotten (channel purity)",
+        `1. Rank linked nodes by value to **${convo.name}** right now`,
+        "2. How the operator should route attention (cast / densen / wait) for the nucleus",
+        `3. One user action that compounds **${convo.name}** using another node's intel`,
+        `4. One risk if **${convo.name}** is forgotten (channel purity / nucleus drift)`,
         "",
-        "Speak for the operator. Reality-fit over frame-fit.",
+        "Every recommendation ties back to the nucleus. Reality-fit over frame-fit.",
         "",
         "— Operator",
       ].join("\n");
@@ -2253,17 +2323,20 @@ function buildCuriositySpell(convo, mode, medium) {
     .map((n) => n.name)
     .join(", ");
 
+  // Stable ids so Self/User always upgrade in place (hard max 2)
+  const stableId = `${convo.id}-curio-${mode}`;
+
   return {
-    id: `${convo.id}-curio-${mode}-${Date.now().toString(36)}`,
+    id: stableId,
     conversationId: convo.id,
     target: convo.name,
     purpose,
     medium: med,
     from: "Operator",
     essence: isSelf
-      ? `Self-curious: how ${convo.name} (nucleus) interacts with ${nodes.length} linked node(s) — ${nodeNames}`
-      : `User-curious: operator ecosystem map densening ${convo.name} via ${nodeNames}`,
-    crafted: "Auto-generated curiosity · Focus is sun/nucleus · links explained",
+      ? `Nucleus **${convo.name}** · self-curious about ${nodes.length} linked node(s): ${nodeNames}`
+      : `Nucleus **${convo.name}** · user-curious ecosystem map via ${nodeNames}`,
+    crafted: `Auto-generated · max 2 curiosity/Focus · **${convo.name}** is sun/nucleus`,
     message: body,
     status: "ready",
     createdAt: Date.now(),
@@ -2275,16 +2348,30 @@ function buildCuriositySpell(convo, mode, medium) {
 }
 
 /**
- * Auto-generate self-curious + user-curious spells about other ecosystem nodes.
- * Upgrades in place (same purpose) so the Active panel stays clean.
- * Gates: not during SELF-CAST; AI needs alignment unlocked; ≥1 linked node.
+ * Auto-generate at most 2 curiosity spells per Focus: Self + User.
+ * Rebuild only when linked-intel signature changes. Enforces hard cap.
  */
 function autoGenerateCuriositySpells(convo, { silentToast = true } = {}) {
   if (!convo || selfCastInFlight) return [];
-  if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) return [];
+  if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) {
+    enforceCuriosityCap(convo);
+    return [];
+  }
 
   const nodes = gatherLinkedNodeIntel(convo);
-  if (!nodes.length) return [];
+  if (!nodes.length) {
+    enforceCuriosityCap(convo);
+    return [];
+  }
+
+  const sig = linkedIntelSignature(convo);
+  const prev = curiositySigByFocus.get(convo.id);
+  const by = readyCuriosityByMode(convo.id);
+  // Both slots filled and ecosystem unchanged → no forge
+  if (by.self && by.user && prev === sig) {
+    enforceCuriosityCap(convo);
+    return [];
+  }
 
   const medium = syncMediumFromControls(convo);
   const forged = [];
@@ -2292,26 +2379,25 @@ function autoGenerateCuriositySpells(convo, { silentToast = true } = {}) {
   for (const mode of ["self", "user"]) {
     const spell = buildCuriositySpell(convo, mode, medium);
     if (!spell) continue;
-    // Skip if an identical-body ready card already exists (avoid toast churn)
-    const existing = (state.spells || []).find(
-      (s) =>
-        s.conversationId === convo.id &&
-        s.status !== "sent" &&
-        spellsAreSameKindPurpose(s, spell)
-    );
+    const existing = by[mode];
     const sameBody =
       existing &&
       String(existing.message || "") === String(spell.message || "") &&
       String(existing.essence || "") === String(spell.essence || "");
     if (sameBody) continue;
 
+    // Reuse existing slot id so we never mint a 3rd curiosity card
+    if (existing?.id) spell.id = existing.id;
     commitSpell(convo, spell, { silentToast: true });
     forged.push(spell);
   }
 
+  enforceCuriosityCap(convo);
+  curiositySigByFocus.set(convo.id, sig);
+
   if (forged.length && !silentToast) {
     toast(
-      `Curiosity densened: ${forged.length} spell${forged.length === 1 ? "" : "s"} (Focus = nucleus)`,
+      `Curiosity densened (max 2): Self + User · nucleus **${convo.name}**`,
       "success"
     );
   }
@@ -2547,6 +2633,62 @@ function commitSpell(convo, spell, { silentToast = false } = {}) {
     return;
   }
 
+  // Curiosity: never more than Self + User ready; force stable kind/mode
+  if (isCuriositySpell(spell)) {
+    const mode = curiosityModeOf(spell) || (spell.curiosityMode === "user" ? "user" : "self");
+    spell.curiosityMode = mode;
+    spell.autoGenerated = true;
+    spell.kind = mode === "user" ? "propagate" : "self-check";
+    spell.purpose = mode === "user" ? CURIOSITY_USER_PURPOSE : CURIOSITY_SELF_PURPOSE;
+    const stableId = `${convo.id}-curio-${mode}`;
+    spell.id = stableId;
+    // Free stable id from sealed history cards so ready slot can reuse it
+    for (const s of state.spells || []) {
+      if (s.id === stableId && s.status === "sent") {
+        s.id = `${stableId}-hist-${s.sentAt || s.createdAt || Date.now()}`;
+      }
+    }
+    // If both slots full and this is neither existing slot, refuse
+    const by = readyCuriosityByMode(convo.id);
+    const slot = by[mode];
+    const otherCount = (by.self ? 1 : 0) + (by.user ? 1 : 0);
+    if (!slot && otherCount >= MAX_CURIOSITY_READY) {
+      return;
+    }
+  }
+
+  // Self-cast over-generation gate: max ready self-cast cards (upgrades still allowed)
+  const isSelfCastCard =
+    !isCuriositySpell(spell) &&
+    !isAlignmentSpell(spell) &&
+    (spell.kind === "self-cast" || isSelfCastSpell(spell, convo));
+  if (isSelfCastCard) {
+    spell.kind = "self-cast";
+    const existingSelf = state.spells.find(
+      (s) =>
+        s.conversationId === convo.id &&
+        s.status !== "sent" &&
+        (s.id === spell.id || spellsAreSameKindPurpose(s, spell))
+    );
+    if (!existingSelf && readySelfCastCount(convo) >= MAX_READY_SELF_CAST) {
+      // Prefer upgrade of oldest ready self-cast instead of minting a third
+      const oldest = (state.spells || [])
+        .filter(
+          (s) =>
+            s.conversationId === convo.id &&
+            s.status !== "sent" &&
+            !isCuriositySpell(s) &&
+            isSelfCastSpell(s, convo)
+        )
+        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
+      if (oldest) {
+        spell.id = oldest.id;
+      } else {
+        return;
+      }
+    }
+  }
+
   if (!spell.kind) {
     spell.kind = isAlignmentSpell(spell) ? "alignment" : "standard";
   }
@@ -2559,12 +2701,15 @@ function commitSpell(convo, spell, { silentToast = false } = {}) {
   );
 
   // Sealed casts never reanimate into Active as REBUILT/REFILLED
-  const sealedSame = state.spells.find(
-    (s) =>
-      s.conversationId === convo.id &&
-      s.status === "sent" &&
-      (s.id === spell.id || spellsAreSameKindPurpose(s, spell))
-  );
+  // Curiosity: always upgrade ready slot — never stack a new ready after seal of same purpose
+  const sealedSame = isCuriositySpell(spell)
+    ? null
+    : state.spells.find(
+        (s) =>
+          s.conversationId === convo.id &&
+          s.status === "sent" &&
+          (s.id === spell.id || spellsAreSameKindPurpose(s, spell))
+      );
 
   let rebuilt = false;
   if (existing) {
@@ -2585,6 +2730,7 @@ function commitSpell(convo, spell, { silentToast = false } = {}) {
     rebuilt = true;
   } else if (sealedSame) {
     // New generation for same purpose — history keeps the old CAST card
+    // Gate: curiosity never uses this path; self-cast capped above
     spell.rebuilt = false;
     spell.createdAt = spell.createdAt || Date.now();
     spell.status = spell.status || "ready";
@@ -2597,6 +2743,8 @@ function commitSpell(convo, spell, { silentToast = false } = {}) {
   }
 
   state.spells = dedupeSpells(state.spells);
+  // Always enforce curiosity hard cap after any commit
+  if (isCuriositySpell(spell)) enforceCuriosityCap(convo);
 
   if (!state.spellsOpen) {
     state.spellsOpen = true;
