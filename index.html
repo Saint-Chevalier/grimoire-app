@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=system-frame-hide-1" />
+  <link rel="stylesheet" href="css/styles.css?v=little-chat-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -130,6 +130,30 @@
       </div>
       <p class="spells-hint" id="spells-hint">Copy closes the cast (sent + time-stamped). Paste the node reply, densen, Cast Spell for the next true priority.</p>
       <div class="spells-list" id="spells-list"></div>
+
+      <!-- Complex spell little AI chat — quantum leap plans (separate from main Focus chat) -->
+      <section class="little-chat" id="little-chat" aria-label="Complex spell little chat">
+        <header class="little-chat-header">
+          <button type="button" class="little-chat-toggle" id="btn-little-chat-toggle" aria-expanded="true" title="Toggle complex spell little chat">
+            <span class="little-chat-title">Complex · little chat</span>
+            <span class="little-chat-sub">quantum leap plans</span>
+            <span class="little-chat-chevron" aria-hidden="true">▾</span>
+          </button>
+        </header>
+        <div class="little-chat-body" id="little-chat-body">
+          <div class="little-chat-messages" id="little-chat-messages" role="log" aria-live="polite"></div>
+          <form class="little-chat-form" id="little-chat-form" autocomplete="off">
+            <textarea
+              id="little-chat-input"
+              class="little-chat-input"
+              rows="2"
+              placeholder="Direct plan — quantum leaps that unlock more for this Focus…"
+              disabled
+            ></textarea>
+            <button type="submit" class="btn-little-chat-send" id="btn-little-chat-send" title="Send plan" disabled>→</button>
+          </form>
+        </div>
+      </section>
     </aside>
   </div>
 
@@ -240,6 +264,6 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=system-frame-hide-1"></script>
+  <script type="module" src="js/app.js?v=little-chat-1"></script>
 </body>
 </html>

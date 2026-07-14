@@ -137,6 +137,13 @@ const els = {
   spellsHint: $("#spells-hint"),
   tabSpellsActive: $("#tab-spells-active"),
   tabSpellsHistory: $("#tab-spells-history"),
+  littleChat: $("#little-chat"),
+  littleChatBody: $("#little-chat-body"),
+  littleChatMessages: $("#little-chat-messages"),
+  littleChatForm: $("#little-chat-form"),
+  littleChatInput: $("#little-chat-input"),
+  btnLittleChatSend: $("#btn-little-chat-send"),
+  btnLittleChatToggle: $("#btn-little-chat-toggle"),
   constellationPing: $("#constellation-ping"),
   app: $(".app") || document.querySelector(".app"),
   stars: $("#stars"),
@@ -1525,12 +1532,197 @@ function renderAll() {
   renderConvoList();
   renderChat();
   renderSpells();
+  renderLittleChat();
   renderStars();
   updateAttachButtonState();
   renderPendingImages();
   if (els.universeLegend && !els.universeLegend.hasAttribute("hidden")) {
     renderIntelAtlas(activeConvo());
   }
+}
+
+// ─── Complex spell little chat (quantum leap plans) ───
+
+const LITTLE_CHAT_COLLAPSE_KEY = "grimoire-little-chat-collapsed-v1";
+
+function ensureLittleChat(convo) {
+  if (!convo) return null;
+  if (!convo.littleChat || typeof convo.littleChat !== "object") {
+    convo.littleChat = { messages: [], leaps: [] };
+  }
+  if (!Array.isArray(convo.littleChat.messages)) convo.littleChat.messages = [];
+  if (!Array.isArray(convo.littleChat.leaps)) convo.littleChat.leaps = [];
+  return convo.littleChat;
+}
+
+function loadLittleChatCollapsed() {
+  try {
+    return localStorage.getItem(LITTLE_CHAT_COLLAPSE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setLittleChatCollapsed(collapsed) {
+  try {
+    localStorage.setItem(LITTLE_CHAT_COLLAPSE_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+  els.littleChat?.classList.toggle("collapsed", Boolean(collapsed));
+  if (els.btnLittleChatToggle) {
+    els.btnLittleChatToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  }
+}
+
+function renderLittleChat() {
+  const convo = activeConvo();
+  const box = els.littleChatMessages;
+  const input = els.littleChatInput;
+  const send = els.btnLittleChatSend;
+  if (!box) return;
+
+  const enabled = Boolean(convo);
+  if (input) {
+    input.disabled = !enabled;
+    input.placeholder = enabled
+      ? `Direct plan for ${convo.name} — quantum leaps that unlock more…`
+      : "Select a Focus for complex spell plans…";
+  }
+  if (send) send.disabled = !enabled;
+
+  box.innerHTML = "";
+  if (!convo) {
+    box.innerHTML = `<div class="little-chat-empty">Select a Focus — little chat densens complex / quantum-leap plans for that nucleus only.</div>`;
+    return;
+  }
+
+  const lc = ensureLittleChat(convo);
+  if (!lc.messages.length) {
+    box.innerHTML = `<div class="little-chat-empty">Speak a <strong>quantum leap plan</strong> here — separate from the main chat. Unlocks denser spells for <strong>${escapeHtml(convo.name)}</strong>.</div>`;
+    return;
+  }
+
+  for (const m of lc.messages) {
+    const row = document.createElement("div");
+    row.className = `little-chat-msg ${m.role === "user" ? "user" : "grimoire"}`;
+    const who = m.role === "user" ? "You" : "Grimoire";
+    row.innerHTML = `<span class="little-chat-who">${who}</span><div class="little-chat-text">${formatMessageHtml(m.text || "")}</div>`;
+    box.appendChild(row);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+/**
+ * Local reply for complex-spell little chat — quantum leap plans that unlock Focus densen.
+ * Never writes into the main Focus chat stream.
+ */
+function littleChatReply(convo, userText) {
+  const name = convo.name || "Focus";
+  const ch = getSealedChannel(convo);
+  const t = String(userText || "").trim();
+  const lower = t.toLowerCase();
+  const lc = ensureLittleChat(convo);
+
+  // Extract leap seeds (short clauses)
+  const leapBits = t
+    .split(/[.\n;]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 12 && s.length <= 140)
+    .slice(0, 3);
+
+  let unlocked = false;
+  for (const bit of leapBits) {
+    const key = bit.toLowerCase();
+    if (!lc.leaps.some((l) => String(l).toLowerCase() === key)) {
+      lc.leaps.push(bit.slice(0, 120));
+      unlocked = true;
+    }
+  }
+  // Cap leap memory
+  if (lc.leaps.length > 12) lc.leaps = lc.leaps.slice(-12);
+
+  const isLeap =
+    unlocked ||
+    /\b(quantum|leap|unlock|complex|plan|phase|breakthrough|threshold|densify|densify|densify|next level|open the)\b/i.test(
+      lower
+    ) ||
+    t.length >= 40;
+
+  if (isLeap) {
+    densenConstellationFromIntel(convo, unlocked ? 2 : 1);
+    universeEvent("intel", { count: unlocked ? 2 : 1 });
+    syncFocusIntelligenceFile(
+      convo,
+      "QUANTUM_LEAP_PLAN",
+      t.slice(0, 1200)
+    );
+  }
+
+  const leapList =
+    lc.leaps.length > 0
+      ? lc.leaps
+          .slice(-4)
+          .map((l, i) => `${i + 1}. ${l}`)
+          .join("\n")
+      : "— none locked yet —";
+
+  if (/\b(hello|hi|hey)\b/i.test(lower) && t.length < 24) {
+    return `Little chat for **${name}** (${ch}). State a **quantum leap plan** — direct, complex, what unlocks next for this nucleus. Main chat stays clean.`;
+  }
+
+  if (unlocked || isLeap) {
+    return [
+      `**Leap densened** for **${name}** (nucleus).`,
+      unlocked
+        ? `Locked ${leapBits.length || 1} plan thread(s) into Focus intelligence.`
+        : `Plan held — keep sharpening the leap until it unlocks a concrete spell path.`,
+      ``,
+      `**Quantum leap threads on file:**`,
+      leapList,
+      ``,
+      `Next: refine the plan here, or **Cast Spell** in the main rail to forge the complex transmission against this densen.`,
+    ].join("\n");
+  }
+
+  return `Heard on **${name}**. Little chat is for **quantum leap / complex spell plans** that unlock more for this Focus. Name the leap (what becomes true, what unlocks, one next move).`;
+}
+
+function sendLittleChatMessage(text) {
+  const convo = activeConvo();
+  if (!convo) return;
+  const userText = String(text || "").trim();
+  if (!userText) return;
+
+  const lc = ensureLittleChat(convo);
+  lc.messages.push({
+    id: uid("lcm"),
+    role: "user",
+    text: userText,
+    ts: Date.now(),
+  });
+
+  const reply = littleChatReply(convo, userText);
+  lc.messages.push({
+    id: uid("lcm"),
+    role: "grimoire",
+    text: reply,
+    ts: Date.now(),
+  });
+
+  // Keep little chat lean
+  if (lc.messages.length > 40) {
+    lc.messages = lc.messages.slice(-40);
+  }
+
+  persist();
+  renderLittleChat();
+  // Refresh sky densen + spells panel (leaps may unlock craft)
+  const snap = deriveFocusSnapshot(convo, state.spells);
+  setFocusUniverse(snap, { warp: false });
+  updateUniverseHudChrome(snap);
+  renderSpells();
+  toast("Little chat densened · Focus leap", "success");
 }
 
 /** Persist + apply hide-chat / universe-only mode. */
@@ -3816,6 +4008,28 @@ els.chatInput?.addEventListener("paste", (e) => {
 
 els.chatInput?.addEventListener("input", autoResizeTextarea);
 
+// Complex spell little chat (spells panel) — separate from main Focus chat
+els.littleChatForm?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!activeConvo()) return;
+  const text = (els.littleChatInput?.value || "").trim();
+  if (!text) return;
+  if (els.littleChatInput) els.littleChatInput.value = "";
+  sendLittleChatMessage(text);
+});
+
+els.littleChatInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    els.littleChatForm?.requestSubmit();
+  }
+});
+
+els.btnLittleChatToggle?.addEventListener("click", () => {
+  const collapsed = !els.littleChat?.classList.contains("collapsed");
+  setLittleChatCollapsed(collapsed);
+});
+
 els.btnCast?.addEventListener("click", castSpell);
 
 els.btnAttach?.addEventListener("click", () => {
@@ -4027,6 +4241,7 @@ els.btnAtlasClose?.addEventListener("click", () => setAtlasOpen(false));
 if (!state.spellsOpen) els.app.classList.add("spells-collapsed");
 applySidebarCollapsed(loadSidebarCollapsed());
 applyUniverseViewMode();
+setLittleChatCollapsed(loadLittleChatCollapsed());
 // Silent merge of kind+purpose duplicates on load
 state.spells = dedupeSpells(
   (state.spells || []).filter((s) => !isReceiptSpell(s))
