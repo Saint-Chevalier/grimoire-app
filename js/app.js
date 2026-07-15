@@ -9,6 +9,8 @@
 import {
   ARCHETYPES,
   applyFocusClassification,
+  DEFAULT_FOCUS_FOLDERS,
+  ensureFocusOrgFields,
   focusExists,
   focusIdentityKey,
   formatSpellMarkdown,
@@ -31,6 +33,8 @@ import {
   parseAlignmentIntelligence,
   saveState,
   sealedChannelLabel,
+  STORAGE_KEY,
+  suggestFocusFolderId,
 } from "./data.js";
 import {
   randomStarPosition,
@@ -57,6 +61,7 @@ import {
   wasIntelligenceSetupSkipped,
   isIntelligenceSetupComplete,
   focusFileName,
+  buildFocusMarkdown,
 } from "./intelligence.js";
 import {
   computeFocusHealth,
@@ -70,6 +75,15 @@ const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
 // ─── State ───
 
 const state = loadState();
+// Focus org UI (search is ephemeral; folders + pin/tags persist via saveState)
+if (!Array.isArray(state.focusFolders) || !state.focusFolders.length) {
+  state.focusFolders = structuredClone(DEFAULT_FOCUS_FOLDERS);
+}
+for (const c of state.conversations || []) {
+  ensureFocusOrgFields(c, { assignFolder: true });
+}
+/** Live search query for FOCUSES panel (not persisted). */
+state.focusSearchQuery = "";
 // Hide-chat / pure universe view (not part of vault state — UI chrome only)
 state.universeView = (() => {
   try {
@@ -106,6 +120,10 @@ const els = {
   sidebar: $("#sidebar"),
   btnSidebarToggle: $("#btn-sidebar-toggle"),
   convoList: $("#convo-list"),
+  focusSearch: $("#focus-search"),
+  focusSearchCount: $("#focus-search-count"),
+  focusOrgToolbar: $("#focus-org-toolbar"),
+  btnNewFolder: $("#btn-new-folder"),
   chatMessages: $("#chat-messages"),
   emptyState: $("#empty-state"),
   entityIcon: $("#entity-icon"),
@@ -318,7 +336,19 @@ function stampSpellAnsweredFromIngest(convo, userText) {
 }
 
 function persist() {
+  // Keep org timestamps fresh on active focus when content mutates
+  const active = activeConvo();
+  if (active) {
+    ensureFocusOrgFields(active, { assignFolder: false });
+  }
   saveState(state);
+}
+
+/** Mark Focus as recently updated (list timestamps / sort signals). */
+function touchFocus(convo) {
+  if (!convo) return;
+  ensureFocusOrgFields(convo, { assignFolder: false });
+  convo.updatedAt = Date.now();
 }
 
 function toast(msg, kind = "") {
@@ -458,56 +488,627 @@ function hasAlignmentDirective(convo) {
   );
 }
 
-// ─── Render: sidebar ───
+// ─── Render: sidebar (search + folders + pin + DnD + indicators) ───
+
+/** Last activity timestamp for a Focus (messages, spells, updatedAt). */
+function focusLastUpdated(convo) {
+  if (!convo) return 0;
+  let maxTs = Number(convo.updatedAt || convo.createdAt || 0) || 0;
+  for (const m of convo.messages || []) {
+    const t = Number(m.ts || m.createdAt || 0);
+    if (t > maxTs) maxTs = t;
+  }
+  for (const s of state.spells || []) {
+    if (s.conversationId !== convo.id) continue;
+    const t = Number(s.sentAt || s.createdAt || 0);
+    if (t > maxTs) maxTs = t;
+  }
+  return maxTs;
+}
+
+/** Relative time chip — compact for sidebar. */
+function formatRelativeTime(ts) {
+  if (!ts) return "";
+  const diff = Date.now() - Number(ts);
+  if (diff < 0) return "now";
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return "now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 48) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d`;
+  const mo = Math.floor(day / 30);
+  return `${mo}mo`;
+}
+
+/** Unread message count (messages after lastViewedAt, excluding active focus). */
+function unreadCount(convo) {
+  if (!convo || convo.id === state.activeId) return 0;
+  const last = Number(convo.lastViewedAt || 0) || 0;
+  return (convo.messages || []).filter((m) => {
+    if (!m) return false;
+    if (m.role === "system" || m.kind === "focus-suggestion") return false;
+    const t = Number(m.ts || m.createdAt || 0);
+    return t > last;
+  }).length;
+}
+
+/** Linked node count for indicator (sibling focuses / ecosystem). */
+function linkedNodeCount(convo) {
+  if (!convo) return 0;
+  const sameName = (state.conversations || []).filter(
+    (f) => f.id !== convo.id && String(f.name || "").toLowerCase() === String(convo.name || "").toLowerCase()
+  ).length;
+  const others = Math.max(0, (state.conversations || []).length - 1);
+  // Prefer same-name dual-channel count; fall back to thin ecosystem signal
+  return sameName || Math.min(others, 6);
+}
+
+/**
+ * Instant live filter: name, archetype, sealed node/channel, type, tags, keywords.
+ */
+function focusMatchesSearch(convo, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return true;
+  if (!convo) return false;
+  const arch = ARCHETYPES[convo.archetype] || {};
+  const channel = getSealedChannel(convo);
+  const type = getFocusType(convo);
+  const tags = (convo.tags || []).join(" ");
+  const hay = [
+    convo.name,
+    convo.archetype,
+    arch.label,
+    channel,
+    type,
+    convo.backend,
+    convo.medium,
+    convo.model,
+    convo.aiSubtype,
+    tags,
+    sealedChannelLabel(convo),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (hay.includes(q)) return true;
+  // Multi-token: all tokens must match somewhere
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1 && tokens.every((t) => hay.includes(t))) return true;
+  // Keyword scan recent user/grimoire messages (light)
+  const msgs = (convo.messages || []).slice(-12);
+  for (const m of msgs) {
+    if (String(m.text || "").toLowerCase().includes(q)) return true;
+  }
+  return false;
+}
+
+function getSortedFocusFolders() {
+  const folders = Array.isArray(state.focusFolders) ? state.focusFolders : [];
+  return [...folders].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+function sortFocusesForDisplay(list) {
+  return [...list].sort((a, b) => {
+    const pinA = a.pinned ? 1 : 0;
+    const pinB = b.pinned ? 1 : 0;
+    if (pinA !== pinB) return pinB - pinA;
+    // Preserve array order (operator drag order) as stable secondary
+    const ia = state.conversations.indexOf(a);
+    const ib = state.conversations.indexOf(b);
+    return ia - ib;
+  });
+}
 
 function renderConvoList() {
+  if (!els.convoList) return;
   els.convoList.innerHTML = "";
-  state.conversations.forEach((c) => {
-    const arch = ARCHETYPES[c.archetype] || ARCHETYPES.wizard;
-    const pending = pendingCount(c.id);
-    const channel = getSealedChannel(c);
-    const typeTag =
-      getFocusType(c) === "ai"
-        ? "AI"
-        : getFocusType(c) === "network"
-          ? "Network"
-          : "Person";
-    const row = document.createElement("div");
-    row.className = "convo-item" + (c.id === state.activeId ? " active" : "");
-    row.setAttribute("role", "listitem");
-    row.dataset.focusId = c.id;
 
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "convo-item-main";
-    btn.title = `${c.name} · ${channel} (sealed)`;
-    btn.innerHTML = `
-      <span class="convo-icon" aria-hidden="true">${arch.icon}</span>
-      <span class="convo-text">
-        <span class="convo-name">${escapeHtml(c.name)}</span>
-        <span class="convo-channel-tag">${escapeHtml(channel)}</span>
-        <span class="convo-meta">${escapeHtml(typeTag)}</span>
-      </span>
-      ${pending > 0 ? `<span class="convo-badge">${pending}</span>` : ""}
-    `;
-    btn.addEventListener("click", () => selectConvo(c.id));
+  const query = state.focusSearchQuery || "";
+  const all = state.conversations || [];
+  const matched = all.filter((c) => focusMatchesSearch(c, query));
+  const searching = Boolean(String(query).trim());
 
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "focus-delete-btn";
-    del.title = `Delete focus ${c.name}`;
-    del.setAttribute("aria-label", `Delete focus ${c.name}`);
-    del.textContent = "✕";
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      requestDeleteFocus(c.id);
-    });
+  // Search result count
+  if (els.focusSearchCount) {
+    if (searching) {
+      els.focusSearchCount.hidden = false;
+      els.focusSearchCount.textContent = `${matched.length}/${all.length}`;
+    } else {
+      els.focusSearchCount.hidden = true;
+      els.focusSearchCount.textContent = "";
+    }
+  }
 
-    row.appendChild(btn);
-    row.appendChild(del);
-    els.convoList.appendChild(row);
+  if (!matched.length) {
+    const empty = document.createElement("div");
+    empty.className = "focus-list-empty";
+    empty.textContent = searching ? "No focuses match" : "No focuses yet";
+    els.convoList.appendChild(empty);
+    return;
+  }
+
+  const folders = getSortedFocusFolders();
+  const folderIds = new Set(folders.map((f) => f.id));
+
+  // Pinned strip (always first when not searching by folder collapse rules)
+  const pinned = sortFocusesForDisplay(matched.filter((c) => c.pinned));
+  const unpinned = matched.filter((c) => !c.pinned);
+
+  if (pinned.length && !searching) {
+    const pinHeader = document.createElement("div");
+    pinHeader.className = "focus-group-header focus-group-pinned";
+    pinHeader.innerHTML = `<span class="focus-group-name">★ Pinned</span><span class="focus-group-count">${pinned.length}</span>`;
+    els.convoList.appendChild(pinHeader);
+    for (const c of pinned) {
+      els.convoList.appendChild(buildFocusRow(c));
+    }
+  }
+
+  if (searching) {
+    // Flat filtered results (include pinned in list once)
+    const flat = sortFocusesForDisplay(matched);
+    for (const c of flat) {
+      els.convoList.appendChild(buildFocusRow(c));
+    }
+    return;
+  }
+
+  // Group unpinned by folder
+  const byFolder = new Map();
+  const ungrouped = [];
+  for (const c of unpinned) {
+    const fid = c.folderId && folderIds.has(c.folderId) ? c.folderId : null;
+    if (!fid) {
+      ungrouped.push(c);
+      continue;
+    }
+    if (!byFolder.has(fid)) byFolder.set(fid, []);
+    byFolder.get(fid).push(c);
+  }
+
+  for (const folder of folders) {
+    const items = sortFocusesForDisplay(byFolder.get(folder.id) || []);
+    // Always show folder headers so DnD targets + empty groups remain usable
+    els.convoList.appendChild(buildFolderHeader(folder, items.length));
+    if (folder.collapsed) continue;
+    if (!items.length) {
+      const dropZone = document.createElement("div");
+      dropZone.className = "focus-folder-empty";
+      dropZone.dataset.folderId = folder.id;
+      dropZone.textContent = "Drop focuses here";
+      wireFolderDropTarget(dropZone, folder.id);
+      els.convoList.appendChild(dropZone);
+      continue;
+    }
+    for (const c of items) {
+      els.convoList.appendChild(buildFocusRow(c, { folderId: folder.id }));
+    }
+  }
+
+  // Ungrouped
+  const free = sortFocusesForDisplay(ungrouped);
+  if (free.length || folders.length) {
+    const freeHeader = document.createElement("div");
+    freeHeader.className = "focus-group-header focus-group-free";
+    freeHeader.dataset.folderId = "";
+    freeHeader.innerHTML = `<span class="focus-group-name">Ungrouped</span><span class="focus-group-count">${free.length}</span>`;
+    wireFolderDropTarget(freeHeader, null);
+    els.convoList.appendChild(freeHeader);
+  }
+  for (const c of free) {
+    els.convoList.appendChild(buildFocusRow(c, { folderId: null }));
+  }
+}
+
+function buildFolderHeader(folder, count) {
+  const header = document.createElement("div");
+  header.className = "focus-group-header" + (folder.collapsed ? " collapsed" : "");
+  header.dataset.folderId = folder.id;
+  header.setAttribute("role", "button");
+  header.tabIndex = 0;
+  header.title = "Click to expand/collapse · Drop focuses to group";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "focus-group-toggle";
+  toggle.setAttribute("aria-expanded", folder.collapsed ? "false" : "true");
+  toggle.textContent = folder.collapsed ? "▸" : "▾";
+  toggle.title = folder.collapsed ? "Expand group" : "Collapse group";
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleFolderCollapsed(folder.id);
   });
+
+  const name = document.createElement("span");
+  name.className = "focus-group-name";
+  name.textContent = folder.name;
+
+  const countEl = document.createElement("span");
+  countEl.className = "focus-group-count";
+  countEl.textContent = String(count);
+
+  const ren = document.createElement("button");
+  ren.type = "button";
+  ren.className = "focus-group-action";
+  ren.title = "Rename group";
+  ren.textContent = "✎";
+  ren.addEventListener("click", (e) => {
+    e.stopPropagation();
+    renameFocusFolder(folder.id);
+  });
+
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "focus-group-action danger";
+  del.title = "Delete group (focuses become ungrouped)";
+  del.textContent = "✕";
+  del.addEventListener("click", (e) => {
+    e.stopPropagation();
+    deleteFocusFolder(folder.id);
+  });
+
+  header.appendChild(toggle);
+  header.appendChild(name);
+  header.appendChild(countEl);
+  header.appendChild(ren);
+  header.appendChild(del);
+
+  header.addEventListener("click", () => toggleFolderCollapsed(folder.id));
+  header.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleFolderCollapsed(folder.id);
+    }
+  });
+  wireFolderDropTarget(header, folder.id);
+  return header;
+}
+
+function buildFocusRow(c, { folderId } = {}) {
+  const arch = ARCHETYPES[c.archetype] || ARCHETYPES.wizard;
+  const pending = pendingCount(c.id);
+  const unread = unreadCount(c);
+  const channel = getSealedChannel(c);
+  const typeTag =
+    getFocusType(c) === "ai"
+      ? "AI"
+      : getFocusType(c) === "network"
+        ? "Network"
+        : "Person";
+  const updated = focusLastUpdated(c);
+  const rel = formatRelativeTime(updated);
+  const links = linkedNodeCount(c);
+  const tags = Array.isArray(c.tags) ? c.tags : [];
+
+  const row = document.createElement("div");
+  row.className =
+    "convo-item" +
+    (c.id === state.activeId ? " active" : "") +
+    (c.pinned ? " pinned" : "");
+  row.setAttribute("role", "listitem");
+  row.dataset.focusId = c.id;
+  row.draggable = true;
+  if (folderId !== undefined) row.dataset.folderId = folderId == null ? "" : folderId;
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "convo-item-main";
+  const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
+  btn.title = `${c.name} · ${channel} (sealed)${tagStr}${rel ? ` · updated ${rel}` : ""}`;
+
+  const badgeParts = [];
+  if (unread > 0) {
+    badgeParts.push(`<span class="convo-badge unread" title="${unread} unread">${unread}</span>`);
+  } else if (pending > 0) {
+    badgeParts.push(`<span class="convo-badge" title="${pending} ready spells">${pending}</span>`);
+  }
+
+  const tagsHtml = tags.length
+    ? `<span class="convo-tags">${tags
+        .slice(0, 3)
+        .map((t) => `<span class="convo-tag">${escapeHtml(t)}</span>`)
+        .join("")}</span>`
+    : "";
+
+  btn.innerHTML = `
+    <span class="convo-icon" aria-hidden="true">${arch.icon}</span>
+    <span class="convo-text">
+      <span class="convo-name-row">
+        ${c.pinned ? `<span class="convo-pin-mark" title="Pinned" aria-hidden="true">★</span>` : ""}
+        <span class="convo-name">${escapeHtml(c.name)}</span>
+      </span>
+      <span class="convo-channel-tag">${escapeHtml(channel)}</span>
+      <span class="convo-meta">
+        <span>${escapeHtml(typeTag)}</span>
+        ${rel ? `<span class="convo-updated" title="Last updated">${escapeHtml(rel)}</span>` : ""}
+        ${links > 0 ? `<span class="convo-links" title="Linked nodes">⬡${links}</span>` : ""}
+      </span>
+      ${tagsHtml}
+    </span>
+    ${badgeParts.join("")}
+  `;
+  btn.addEventListener("click", () => selectConvo(c.id));
+
+  const actions = document.createElement("div");
+  actions.className = "focus-row-actions";
+
+  const pinBtn = document.createElement("button");
+  pinBtn.type = "button";
+  pinBtn.className = "focus-action-btn" + (c.pinned ? " on" : "");
+  pinBtn.title = c.pinned ? "Unpin focus" : "Pin / favorite";
+  pinBtn.setAttribute("aria-label", c.pinned ? `Unpin ${c.name}` : `Pin ${c.name}`);
+  pinBtn.textContent = c.pinned ? "★" : "☆";
+  pinBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    toggleFocusPinned(c.id);
+  });
+
+  const tagBtn = document.createElement("button");
+  tagBtn.type = "button";
+  tagBtn.className = "focus-action-btn";
+  tagBtn.title = "Edit tags";
+  tagBtn.setAttribute("aria-label", `Tags for ${c.name}`);
+  tagBtn.textContent = "#";
+  tagBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    editFocusTags(c.id);
+  });
+
+  const exportBtn = document.createElement("button");
+  exportBtn.type = "button";
+  exportBtn.className = "focus-action-btn";
+  exportBtn.title = "Export dossier (.md)";
+  exportBtn.setAttribute("aria-label", `Export dossier for ${c.name}`);
+  exportBtn.textContent = "⇩";
+  exportBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    exportFocusDossier(c.id);
+  });
+
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "focus-delete-btn";
+  del.title = `Delete focus ${c.name}`;
+  del.setAttribute("aria-label", `Delete focus ${c.name}`);
+  del.textContent = "✕";
+  del.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    requestDeleteFocus(c.id);
+  });
+
+  actions.appendChild(pinBtn);
+  actions.appendChild(tagBtn);
+  actions.appendChild(exportBtn);
+  actions.appendChild(del);
+
+  row.appendChild(btn);
+  row.appendChild(actions);
+  wireFocusDrag(row, c);
+  return row;
+}
+
+// ─── Focus org: pin / tags / folders / search / DnD / export ───
+
+function toggleFocusPinned(focusId) {
+  const focus = state.conversations.find((c) => c.id === focusId);
+  if (!focus) return;
+  ensureFocusOrgFields(focus, { assignFolder: false });
+  focus.pinned = !focus.pinned;
+  focus.updatedAt = Date.now();
+  persist();
+  renderConvoList();
+  toast(focus.pinned ? `Pinned ${focus.name}` : `Unpinned ${focus.name}`, "success");
+}
+
+function editFocusTags(focusId) {
+  const focus = state.conversations.find((c) => c.id === focusId);
+  if (!focus) return;
+  ensureFocusOrgFields(focus, { assignFolder: false });
+  const current = (focus.tags || []).join(", ");
+  const next = window.prompt(
+    `Tags for ${focus.name} (comma-separated)\nSearchable keywords.`,
+    current
+  );
+  if (next === null) return;
+  focus.tags = next
+    .split(/[,;]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  focus.updatedAt = Date.now();
+  persist();
+  renderConvoList();
+  toast(focus.tags.length ? `Tags: ${focus.tags.join(", ")}` : "Tags cleared", "success");
+}
+
+function toggleFolderCollapsed(folderId) {
+  const folder = (state.focusFolders || []).find((f) => f.id === folderId);
+  if (!folder) return;
+  folder.collapsed = !folder.collapsed;
+  persist();
+  renderConvoList();
+}
+
+function renameFocusFolder(folderId) {
+  const folder = (state.focusFolders || []).find((f) => f.id === folderId);
+  if (!folder) return;
+  const next = window.prompt("Rename group", folder.name);
+  if (next === null) return;
+  const name = next.trim();
+  if (!name) return;
+  folder.name = name.slice(0, 48);
+  persist();
+  renderConvoList();
+  toast(`Group renamed: ${folder.name}`, "success");
+}
+
+function deleteFocusFolder(folderId) {
+  const folder = (state.focusFolders || []).find((f) => f.id === folderId);
+  if (!folder) return;
+  const ok = window.confirm(
+    `Delete group “${folder.name}”?\n\nFocuses inside become Ungrouped. Focuses themselves are not deleted.`
+  );
+  if (!ok) return;
+  state.focusFolders = (state.focusFolders || []).filter((f) => f.id !== folderId);
+  for (const c of state.conversations || []) {
+    if (c.folderId === folderId) c.folderId = null;
+  }
+  persist();
+  renderConvoList();
+  toast(`Group removed: ${folder.name}`, "success");
+}
+
+function createFocusFolder() {
+  const name = window.prompt("New folder / group name", "");
+  if (name === null) return;
+  const trimmed = name.trim().slice(0, 48);
+  if (!trimmed) return;
+  if (!Array.isArray(state.focusFolders)) state.focusFolders = [];
+  const id = `folder-${trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "group"}-${Date.now().toString(36).slice(-4)}`;
+  const order = state.focusFolders.reduce((m, f) => Math.max(m, f.order ?? 0), -1) + 1;
+  state.focusFolders.push({ id, name: trimmed, collapsed: false, order });
+  persist();
+  renderConvoList();
+  toast(`Group created: ${trimmed}`, "success");
+}
+
+function moveFocusToFolder(focusId, folderId) {
+  const focus = state.conversations.find((c) => c.id === focusId);
+  if (!focus) return;
+  ensureFocusOrgFields(focus, { assignFolder: false });
+  const next = folderId || null;
+  if (focus.folderId === next) return;
+  focus.folderId = next;
+  focus.updatedAt = Date.now();
+  persist();
+  renderConvoList();
+}
+
+/**
+ * Reorder conversations array so `focusId` sits before `beforeId`
+ * (or at end if beforeId is null). Keeps drag order as source of truth.
+ */
+function reorderFocuses(focusId, beforeId, targetFolderId) {
+  const list = state.conversations;
+  const from = list.findIndex((c) => c.id === focusId);
+  if (from < 0) return;
+  const [item] = list.splice(from, 1);
+  ensureFocusOrgFields(item, { assignFolder: false });
+  if (targetFolderId !== undefined) {
+    item.folderId = targetFolderId || null;
+  }
+  item.updatedAt = Date.now();
+  if (!beforeId) {
+    list.push(item);
+  } else {
+    let to = list.findIndex((c) => c.id === beforeId);
+    if (to < 0) list.push(item);
+    else list.splice(to, 0, item);
+  }
+  persist();
+  renderConvoList();
+}
+
+let _dragFocusId = null;
+
+function wireFocusDrag(row, focus) {
+  row.addEventListener("dragstart", (e) => {
+    _dragFocusId = focus.id;
+    row.classList.add("dragging");
+    try {
+      e.dataTransfer.setData("text/plain", focus.id);
+      e.dataTransfer.effectAllowed = "move";
+    } catch {
+      /* IE / restricted */
+    }
+  });
+  row.addEventListener("dragend", () => {
+    _dragFocusId = null;
+    row.classList.remove("dragging");
+    els.convoList?.querySelectorAll(".drag-over").forEach((el) => el.classList.remove("drag-over"));
+  });
+  row.addEventListener("dragover", (e) => {
+    if (!_dragFocusId || _dragFocusId === focus.id) return;
+    e.preventDefault();
+    row.classList.add("drag-over");
+    try {
+      e.dataTransfer.dropEffect = "move";
+    } catch {
+      /* ignore */
+    }
+  });
+  row.addEventListener("dragleave", () => {
+    row.classList.remove("drag-over");
+  });
+  row.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    row.classList.remove("drag-over");
+    const id = _dragFocusId || e.dataTransfer?.getData("text/plain");
+    if (!id || id === focus.id) return;
+    // Place dragged item before this row; adopt this row's folder
+    const targetFolder =
+      focus.folderId !== undefined ? focus.folderId : null;
+    reorderFocuses(id, focus.id, targetFolder);
+  });
+}
+
+function wireFolderDropTarget(el, folderId) {
+  el.addEventListener("dragover", (e) => {
+    if (!_dragFocusId) return;
+    e.preventDefault();
+    el.classList.add("drag-over");
+  });
+  el.addEventListener("dragleave", () => {
+    el.classList.remove("drag-over");
+  });
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.remove("drag-over");
+    const id = _dragFocusId || e.dataTransfer?.getData("text/plain");
+    if (!id) return;
+    moveFocusToFolder(id, folderId);
+  });
+}
+
+/** One-click export of Focus intelligence dossier as markdown download. */
+function exportFocusDossier(focusId) {
+  const focus = state.conversations.find((c) => c.id === focusId);
+  if (!focus) return;
+  try {
+    const md = buildFocusMarkdown(focus, state.spells || []);
+    const name = focusFileName(focus) || `${focus.id}.md`;
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast(`Dossier exported: ${name}`, "success");
+  } catch (err) {
+    console.warn("exportFocusDossier failed", err);
+    toast("Export failed", "error");
+  }
+}
+
+function onFocusSearchInput() {
+  state.focusSearchQuery = els.focusSearch?.value || "";
+  renderConvoList();
 }
 
 /**
@@ -585,6 +1186,9 @@ function purgeFocusFromStorage(focusId, focus) {
     if (data.activeId === focusId) {
       data.activeId = (data.conversations && data.conversations[0]?.id) || null;
       changed = true;
+    }
+    if (Array.isArray(data.focusFolders)) {
+      // keep folders; no per-focus folder cleanup needed beyond conversations
     }
     if (changed) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -1979,7 +2583,11 @@ function selectConvo(id) {
   }
   state.activeId = id;
   const convo = activeConvo();
-  if (convo) ensureAlignmentDirective(convo);
+  if (convo) {
+    ensureAlignmentDirective(convo);
+    ensureFocusOrgFields(convo, { assignFolder: false });
+    convo.lastViewedAt = Date.now();
+  }
   persist();
   // Warp to this Focus's universe — always paint starfield for this Focus
   const snap = deriveFocusSnapshot(convo, state.spells);
@@ -2006,6 +2614,64 @@ function ensureAlignmentDirective(convo) {
     kind: "alignment-directive",
   });
   return true;
+}
+
+function handleLookAround() {
+  const convo = activeConvo();
+  if (!convo) {
+    addGrimoireMessage("Select a focus first.", "system");
+    return;
+  }
+
+  const spells = (state.spells || []).filter((s) => s.conversationId === convo.id);
+  const active = activeSpellsFor(convo.id);
+  const history = historySpellsFor(convo.id);
+  const channel = getSealedChannel(convo);
+  const type = getFocusType(convo);
+  const created = convo.createdAt ? new Date(convo.createdAt).toLocaleString() : "unknown";
+  const recent = (convo.messages || [])
+    .slice(-4)
+    .map((m) => `• ${m.role === "grimoire" ? "GRIMOIRE" : m.role.toUpperCase()}: ${String(m.text || "").slice(0, 140)}`)
+    .join("\n") || "• no recent messages";
+
+  const summary = [
+    `### Look around — ${convo.name} · ${channel}`,
+    `Type: ${type} · Archetype: ${convo.archetype || "—"}`,
+    `Born: ${created}`,
+    ``,
+    `**Recent intelligence**`,
+    recent,
+    ``,
+    `**Spells**`,
+    `Active: ${active.length} · History: ${history.length}`,
+    active.length ? active.map((s) => `• ${s.purpose}`).join("\n") : "• no active spells",
+    ``,
+    `**What I know**`,
+    `This Focus has ${(convo.messages || []).length} messages and ${spells.length} recorded spells.`,
+    channel === "Local" && convo.id === "grimoire-self"
+      ? "This is GRIMOIRE observing itself. Use Cast Spell to forge a self-evolution directive."
+      : "Use Cast Spell to forge the next true priority from this frame.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  addGrimoireMessage(summary, "intel");
+}
+
+function addGrimoireMessage(text, kind = "system") {
+  const convo = activeConvo();
+  if (!convo) return;
+  convo.messages = convo.messages || [];
+  convo.messages.push({
+    id: uid("msg"),
+    role: "grimoire",
+    text,
+    kind,
+    ts: Date.now(),
+  });
+  persist();
+  renderChat();
+  renderIntelAtlas(convo);
 }
 
 function sendMessage(text) {
@@ -2103,6 +2769,7 @@ function sendMessage(text) {
     images: sentImages,
     ts: Date.now(),
   });
+  touchFocus(convo);
 
   // Each image = nebula bloom + intel stars
   if (sentImages.length) {
@@ -4102,12 +4769,21 @@ function createConversation({ name, type, archetype, model } = {}) {
     star: randomStarPosition(state.conversations),
     messages,
     createdAt: bornAt,
+    updatedAt: bornAt,
+    lastViewedAt: bornAt,
+    pinned: false,
+    tags: [],
+    folderId: null,
   };
 
   applyFocusClassification(convo, {
     type: t,
     model: t === "ai" ? rawModel : undefined,
   });
+  ensureFocusOrgFields(convo, { assignFolder: true });
+  if (convo.folderId == null) {
+    convo.folderId = suggestFocusFolderId(convo);
+  }
 
   // Strip any legacy auto-discovery suggestion messages from all focuses
   for (const f of state.conversations) {
@@ -4165,7 +4841,12 @@ els.chatForm?.addEventListener("submit", (e) => {
   if (!text && !hasImages) return;
   els.chatInput.value = "";
   autoResizeTextarea();
-  sendMessage(text);
+  const trimmed = text.trim();
+  if (/^look\s+around$/i.test(trimmed) || /^\/look$/i.test(trimmed)) {
+    handleLookAround();
+    return;
+  }
+  sendMessage(trimmed);
 });
 
 els.chatInput?.addEventListener("keydown", (e) => {
@@ -4394,19 +5075,61 @@ els.btnIntelFolder?.addEventListener("click", () => {
   onChooseIntelFolder();
 });
 
+els.btnAppSettings?.addEventListener("click", () => {
+  openAppSettings();
+});
+els.btnAppSettingsClose?.addEventListener("click", () => {
+  closeAppSettings();
+});
+document.addEventListener("click", (e) => {
+  if (
+    els.appSettingsPanel &&
+    !els.appSettingsPanel.hasAttribute("hidden") &&
+    !e.target.closest("#app-settings-panel") &&
+    !e.target.closest("#btn-app-settings")
+  ) {
+    closeAppSettings();
+  }
+});
+
+function openAppSettings() {
+  if (!els.appSettingsPanel) return;
+  els.appSettingsPanel.removeAttribute("hidden");
+  toast("App settings opened", "");
+}
+function closeAppSettings() {
+  if (!els.appSettingsPanel) return;
+  els.appSettingsPanel.setAttribute("hidden", "");
+}
+
 els.btnSidebarToggle?.addEventListener("click", () => {
   toggleSidebar();
+});
+
+els.focusSearch?.addEventListener("input", () => {
+  onFocusSearchInput();
+});
+els.focusSearch?.addEventListener("search", () => {
+  onFocusSearchInput();
+});
+els.btnNewFolder?.addEventListener("click", () => {
+  createFocusFolder();
 });
 
 function resetApp() {
   if (!confirm("Reset Grimoire? This clears all focuses, spells, and saved state.")) return;
   try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem("grimoire-mvp-v1");
     localStorage.removeItem("grimoire-state-v1");
     localStorage.removeItem("grimoire-sidebar-collapsed-v1");
   } catch {}
   state.conversations = [];
   state.spells = [];
   state.activeId = null;
+  state.focusFolders = structuredClone(DEFAULT_FOCUS_FOLDERS);
+  state.focusSearchQuery = "";
+  if (els.focusSearch) els.focusSearch.value = "";
   setSpellsOpen(true);
   persist();
   renderAll();

@@ -383,6 +383,37 @@ export const SEED_CONVERSATIONS = [
       },
     ],
   },
+  {
+    id: "grimoire-self",
+    name: "GRIMOIRE",
+    archetype: "wizard",
+    type: "ai",
+    medium: "Local",
+    backend: "Local",
+    aiSubtype: "Grimoire",
+    star: { x: 50, y: 50 },
+    messages: [
+      {
+        id: "gr-m0",
+        role: "grimoire",
+        text: "Sealed channel: **GRIMOIRE · Local**. This is the app's own universe. It observes its own structure, spells, and evolution.",
+        ts: Date.now() - 10000000,
+        kind: "alignment-directive",
+      },
+      {
+        id: "gr-m1",
+        role: "user",
+        text: "GRIMOIRE, what is your purpose? How do you exist, and what universe do you steward?",
+        ts: Date.now() - 9000000,
+      },
+      {
+        id: "gr-m2",
+        role: "grimoire",
+        text: "I am the living grimoire — local sovereign spell forge. Each Focus is a universe. I densen intelligence, craft spells, and write markdown to disk. My purpose is to make every Focus elite, adaptive, and real.",
+        ts: Date.now() - 8000000,
+      },
+    ],
+  },
 ];
 
 /** Seed spells (from spells/*.md) */
@@ -1352,7 +1383,28 @@ export function slugify(name) {
   );
 }
 
-const STORAGE_KEY = "grimoire-mvp-v1";
+export const STORAGE_KEY = "grimoire-mvp-v1";
+
+/** Default organize folders for Focus QoL (search / groups / pin). */
+export const DEFAULT_FOCUS_FOLDERS = [
+  { id: "folder-wizard-king", name: "Wizard King", collapsed: false, order: 0 },
+  { id: "folder-archetypes", name: "Archetypes", collapsed: false, order: 1 },
+  { id: "folder-nodes", name: "Nodes", collapsed: false, order: 2 },
+];
+
+/** Suggest a folder id from Focus identity (migration / first seal only). */
+export function suggestFocusFolderId(convo) {
+  if (!convo) return null;
+  const name = String(convo.name || "").toLowerCase().trim();
+  const t = getFocusType(convo);
+  if (name.includes("wizard king")) return "folder-wizard-king";
+  if (t === "network") return "folder-nodes";
+  if (t === "ai" && /^(healer|knight|sage|wizard)$/i.test(name)) {
+    return "folder-archetypes";
+  }
+  if (t === "ai") return "folder-nodes";
+  return null;
+}
 
 export function loadState() {
   try {
@@ -1376,13 +1428,47 @@ export function loadState() {
   } catch {
     /* ignore */
   }
+  const conversations = structuredClone(SEED_CONVERSATIONS).map((c) =>
+    ensureFocusOrgFields(c)
+  );
   return {
-    conversations: structuredClone(SEED_CONVERSATIONS),
+    conversations,
     spells: structuredClone(SEED_SPELLS),
     activeId: "wizard-king-hermes",
     spellsOpen: true,
     spellView: "active",
+    focusFolders: structuredClone(DEFAULT_FOCUS_FOLDERS),
   };
+}
+
+/** Normalize Focus org QoL fields (pin, tags, folder, timestamps). */
+export function ensureFocusOrgFields(convo, { assignFolder = true } = {}) {
+  if (!convo || typeof convo !== "object") return convo;
+  if (typeof convo.pinned !== "boolean") convo.pinned = false;
+  if (!Array.isArray(convo.tags)) {
+    convo.tags = Array.isArray(convo.tags) ? convo.tags : [];
+  }
+  convo.tags = (convo.tags || [])
+    .map((t) => String(t || "").trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  if (convo.folderId === undefined) {
+    convo.folderId = assignFolder ? suggestFocusFolderId(convo) : null;
+  } else if (convo.folderId === "") {
+    convo.folderId = null;
+  }
+  if (!convo.updatedAt) {
+    let maxTs = Number(convo.createdAt || 0) || 0;
+    for (const m of convo.messages || []) {
+      const t = Number(m.ts || m.createdAt || 0);
+      if (t > maxTs) maxTs = t;
+    }
+    convo.updatedAt = maxTs || Date.now();
+  }
+  if (!convo.lastViewedAt) {
+    convo.lastViewedAt = Number(convo.updatedAt || convo.createdAt || Date.now());
+  }
+  return convo;
 }
 
 /**
@@ -1510,6 +1596,15 @@ function migrateState(state) {
     }
   }
 
+  // Inject self-recursive GRIMOIRE Focus if missing
+  const hasGrimoireSelf = (state.conversations || []).some(
+    (c) => c.id === "grimoire-self"
+  );
+  if (!hasGrimoireSelf) {
+    const seed = SEED_CONVERSATIONS.find((c) => c.id === "grimoire-self");
+    if (seed) state.conversations.push(structuredClone(seed));
+  }
+
   if (
     state.activeId &&
     !(state.conversations || []).some((c) => c.id === state.activeId)
@@ -1526,6 +1621,31 @@ function migrateState(state) {
       if (t && (!minTs || t < minTs)) minTs = t;
     }
     c.createdAt = minTs || Date.now();
+  }
+
+  // Focus org QoL — folders + pin/tags/timestamps
+  if (!Array.isArray(state.focusFolders) || !state.focusFolders.length) {
+    state.focusFolders = structuredClone(DEFAULT_FOCUS_FOLDERS);
+  } else {
+    // Ensure default folders exist by id without wiping user folders
+    const byId = new Map(state.focusFolders.map((f) => [f.id, f]));
+    for (const def of DEFAULT_FOCUS_FOLDERS) {
+      if (!byId.has(def.id)) {
+        state.focusFolders.push({ ...def });
+      }
+    }
+    state.focusFolders = state.focusFolders
+      .filter((f) => f && f.id && f.name)
+      .map((f, i) => ({
+        id: String(f.id),
+        name: String(f.name).trim() || "Group",
+        collapsed: Boolean(f.collapsed),
+        order: typeof f.order === "number" ? f.order : i,
+      }))
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+  for (const c of state.conversations || []) {
+    ensureFocusOrgFields(c, { assignFolder: true });
   }
 
   for (const s of state.spells || []) {
@@ -1899,6 +2019,9 @@ export function saveState(state) {
         activeId: state.activeId,
         spellsOpen: state.spellsOpen,
         spellView: state.spellView === "history" ? "history" : "active",
+        focusFolders: Array.isArray(state.focusFolders)
+          ? state.focusFolders
+          : structuredClone(DEFAULT_FOCUS_FOLDERS),
       })
     );
   } catch {
