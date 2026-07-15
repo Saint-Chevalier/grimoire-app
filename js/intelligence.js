@@ -323,6 +323,56 @@ export function pushFocusEvent(focus, eventType, content) {
 }
 
 /**
+ * SCROLL LIST — compact transferable manifest of nodes this Focus has touched.
+ */
+export function buildScrollList(focus, spells = []) {
+  const entries = [];
+  const candidates = [focus, ...(Array.isArray(focus.derivedNodes) ? focus.derivedNodes : [])];
+  for (const node of candidates) {
+    const name = node?.name || node?.id || "Unknown Node";
+    const channel = getSealedChannel(node);
+    const nodeType = getFocusType(node);
+    const snippet =
+      (node?.alignmentNotes || "").trim().slice(0, 240) ||
+      (node?.messages || [])
+        .slice(-3)
+        .map((m) => String(m?.text || "").trim())
+        .filter(Boolean)
+        .join(" / ")
+        .slice(0, 240) ||
+      "Sealed; no extracted intel yet.";
+    entries.push({
+      name,
+      channel,
+      nodeType,
+      snippet,
+      updated: node?.updatedAt || node?.createdAt || Date.now(),
+    });
+  }
+
+  if (!entries.length) {
+    return "_No nodes on this scroll yet. Start casting to grow the list._";
+  }
+
+  const lines = [
+    `# SCROLL LIST — ${focus?.name || "Focus"}`,
+    `Generated: ${fmtDateTime(Date.now())}`,
+    `Nodes: ${entries.length}`,
+    "",
+  ];
+
+  for (const e of entries) {
+    lines.push(`### ${e.name} · ${e.channel} · ${e.nodeType}`);
+    lines.push(e.snippet.trim());
+    lines.push("");
+  }
+
+  lines.push("---");
+  lines.push("_One paste = full Focus transfer into any AI._");
+  return lines.join("\n");
+}
+
+/**
  * Build full intelligence markdown for a Focus from live state.
  */
 export function buildFocusMarkdown(focus, spells = []) {
@@ -348,6 +398,11 @@ export function buildFocusMarkdown(focus, spells = []) {
     `**Sealed channel:** ${focus.name} · ${backend}`,
     "",
   ];
+
+  lines.push("## SCROLL LIST");
+  lines.push("");
+  lines.push(buildScrollList(focus, spells));
+  lines.push("");
 
   lines.push("## Alignment Reveal");
   if (focus.alignmentNotes) {
