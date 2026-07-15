@@ -186,6 +186,7 @@ const els = {
   newModelLabel: $("#new-model-label"),
   newModel: $("#new-entity-model"),
   newFocusHint: $("#new-focus-hint"),
+  newArchetype: $("#new-entity-archetype"),
   btnCancelNew: $("#btn-cancel-new"),
   appSettingsPanel: $("#app-settings-panel"),
   btnAppSettings: $("#btn-app-settings"),
@@ -4719,6 +4720,14 @@ function createConversation({ name, type, archetype, model } = {}) {
   const sealed = t === "ai"
     ? (!rawModel || rawModel === "none" ? "Open" : rawModel)
     : "Open";
+  const archetypeKey =
+    t === "ai"
+      ? ["wizard", "sage", "knight", "healer", "dragon", "painter", "saint_chevalier"].includes(archetype)
+        ? archetype
+        : "wizard"
+      : archetype === "network"
+        ? "network"
+        : "person";
 
   // One Focus = one name + identity (model for AI, open for person)
   if (focusExists(state.conversations, name.trim(), sealed)) {
@@ -4764,7 +4773,7 @@ function createConversation({ name, type, archetype, model } = {}) {
   const convo = {
     id,
     name: name.trim(),
-    archetype: t === "ai" ? "wizard" : "person",
+    archetype: archetypeKey,
     type: t,
     star: randomStarPosition(state.conversations),
     messages,
@@ -5143,8 +5152,9 @@ els.newForm?.addEventListener("submit", (e) => {
   const name = (els.newName?.value || "").trim();
   if (!name) return;
   const type = els.newType?.value === "ai" ? "ai" : "person";
+  const archetype = els.newArchetype?.value || (type === "ai" ? "wizard" : "person");
   const model = type === "ai" ? (els.newModel?.value || "none") : "none";
-  createConversation({ name, type, model });
+  createConversation({ name, type, archetype, model });
   els.dialog?.close();
 });
 

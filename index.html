@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=spells-reopen-1" />
+  <link rel="stylesheet" href="css/styles.css?v=focus-org-qol-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -47,6 +47,25 @@
       <p class="intel-folder-status" id="intel-folder-status">Pick a folder — creates GRIMOIRE-FocusIntelligence/</p>
 
       <div class="sidebar-section-label">FOCUSES</div>
+      <div class="focus-org-toolbar" id="focus-org-toolbar">
+        <div class="focus-search-wrap">
+          <input
+            type="search"
+            id="focus-search"
+            class="focus-search"
+            placeholder="Search name, archetype, node…"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Search focuses"
+          />
+          <span class="focus-search-count" id="focus-search-count" hidden></span>
+        </div>
+        <div class="focus-org-actions">
+          <button type="button" class="btn-focus-org" id="btn-new-folder" title="New folder / group" aria-label="New folder">
+            📁+
+          </button>
+        </div>
+      </div>
       <button type="button" class="btn-new-convo" id="btn-new-convo">
         <span class="plus">+</span> <span class="btn-new-label">New Focus</span>
       </button>
@@ -182,6 +201,20 @@
           <option value="ai">AI</option>
         </select>
       </label>
+      <label id="new-archetype-label">
+        Archetype
+        <select id="new-entity-archetype">
+          <option value="wizard">Wizard King</option>
+          <option value="sage">Sage</option>
+          <option value="knight">Knight</option>
+          <option value="healer">Healer</option>
+          <option value="dragon">Dragon</option>
+          <option value="painter">Painter</option>
+          <option value="saint_chevalier">Saint Chevalier</option>
+          <option value="person">Person</option>
+          <option value="network">Network</option>
+        </select>
+      </label>
       <label id="new-model-label" hidden>
         Model <span class="field-optional">(optional)</span>
         <select id="new-entity-model">
@@ -274,6 +307,6 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=spells-reopen-1"></script>
+  <script type="module" src="js/app.js?v=focus-org-qol-1"></script>
 </body>
 </html>

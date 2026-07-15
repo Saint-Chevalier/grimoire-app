@@ -6,12 +6,15 @@
  */
 
 export const ARCHETYPES = {
-  wizard:  { icon: "✧", label: "Wizard",  kind: "AI" },
-  sage:    { icon: "📜", label: "Sage",    kind: "AI" },
-  knight:  { icon: "⚔", label: "Knight",  kind: "AI" },
-  healer:  { icon: "✚", label: "Healer",  kind: "AI" },
-  person:  { icon: "◎", label: "Person",  kind: "Person" },
-  network: { icon: "⬡", label: "Network", kind: "Network" },
+  wizard:            { icon: "✧", label: "Wizard King", kind: "AI" },
+  sage:              { icon: "📜", label: "Sage",        kind: "AI" },
+  knight:            { icon: "⚔", label: "Knight",      kind: "AI" },
+  healer:            { icon: "✚", label: "Healer",      kind: "AI" },
+  dragon:            { icon: "🔥", label: "Dragon",      kind: "AI" },
+  painter:           { icon: "🎨", label: "Painter",     kind: "AI" },
+  saint_chevalier:   { icon: "🛡", label: "Saint Chevalier", kind: "AI" },
+  person:            { icon: "◎", label: "Person",      kind: "Person" },
+  network:           { icon: "⬡", label: "Network",     kind: "Network" },
 };
 
 /** Entity type classifier (what you're talking to) */
