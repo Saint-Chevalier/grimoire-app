@@ -1652,7 +1652,7 @@ function renderSpells() {
     if (showSelf) item.dataset.selfCast = "1";
     item.setAttribute("role", "button");
     item.setAttribute("tabindex", "0");
-    item.title = "Tap to copy spell";
+    item.title = "Tap to expand / Update Spell";
     const md = formatSpellMarkdown(spell);
     const badgeClass = isSent
       ? "status-badge sent"
@@ -1675,15 +1675,27 @@ function renderSpells() {
     const timeLine = timeBits.length
       ? `<div class="spell-timestamps">${escapeHtml(timeBits.join(" · "))}</div>`
       : "";
+    const targetBadge = spellTargetBadge(spell, convo);
+    const scrollNodeBadges = isSent ? "" : scrollListNodeBadgesForSpell(spell, convo);
     item.innerHTML = `
       <button type="button" class="delete-btn" data-action="delete" title="${isSent ? "Prune from history (two-tap)" : "Delete spell"}">✕</button>
       ${spellCardTopHtml(spell, convo, { badgeClass, badgeText })}
-      <p class="spell-essence">${escapeHtml(spell.essence)}</p>
+      <div class="spell-collapsed-meta">
+        ${targetBadge ? `<span class="spell-target-badge">${targetBadge}</span>` : ""}
+        ${escapeHtml(spell.purpose || "<i>untitled</i>")}
+      </div>
+      <div class="spell-expanded-body" hidden>
+        <pre class="spell-full">${escapeHtml(md)}</pre>
+        <div class="spell-node-links">${scrollNodeBadges || '<span class="spell-node-empty">No linked nodes</span>'}</div>
+        <div class="spell-expanded-actions">
+          <button type="button" class="btn-spell edit" data-action="edit" title="Edit spell">Edit</button>
+          <button type="button" class="btn-spell delete" data-action="delete" title="Delete spell">Delete</button>
+          <button type="button" class="btn-spell update" data-action="update" title="Update Spell — copies text, collapses">Update Spell</button>
+        </div>
+      </div>
       ${timeLine}
-      ${spellActionsHtml(spell, convo, { isSent })}
-      <pre class="spell-full">${escapeHtml(md)}</pre>
     `;
-    wireSpellCardActions(item, spell, { sealOnCopy: !isSent });
+    wireSpellCardActions(item, spell, { sealOnCopy: !isSent, convo });
     els.spellsList.appendChild(item);
   }
 
@@ -1809,46 +1821,57 @@ function spellActionsHtml(spell, convo, { isSent }) {
   return `<div class="spell-actions${self ? " has-self-cast" : ""}">${selfBtn}<button type="button" class="btn-spell expand" data-action="expand">View</button><span class="spell-tap-hint" aria-hidden="true">tap card to copy</span></div>`;
 }
 
-function wireSpellCardActions(item, spell, { sealOnCopy }) {
-  const selfBtn = item.querySelector('[data-action="self-cast"]');
-  if (selfBtn) {
-    selfBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      selfCastSpell(spell.id);
-    });
-  }
-  item.querySelector('[data-action="expand"]')?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    item.classList.toggle("expanded");
-    const btn = item.querySelector('[data-action="expand"]');
-    if (btn) btn.textContent = item.classList.contains("expanded") ? "Hide" : "View";
-  });
-  item.querySelector('[data-action="delete"]')?.addEventListener("click", (e) => {
+function wireSpellCardActions(item, spell, { sealOnCopy, convo }) {
+  const deleteBtn = item.querySelector('[data-action="delete"]');
+  const updateBtn = item.querySelector('[data-action="update"]');
+  const expandBtn = item.querySelector('[data-action="expand"]');
+  const editBtn = item.querySelector('[data-action="edit"]');
+  deleteBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     requestDeleteSpell(spell.id, e.currentTarget);
   });
-
-  // Whole card = tap-to-copy (except control buttons)
-  const doCopy = async (e) => {
-    if (e.target.closest("button, a, input, textarea, .spell-full")) return;
-    e.preventDefault();
-    item.classList.add("spell-copied-flash");
-    setTimeout(() => item.classList.remove("spell-copied-flash"), 420);
-    try {
-      await copySpell(spell.id, { seal: sealOnCopy });
-    } catch {
-      /* clipboard failure already handled inside copySpell */
-    }
-  };
-  item.addEventListener("click", (e) => {
-    void doCopy(e);
+  editBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openEditSpellDialog(item, spell);
   });
+  updateBtn?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await copySpell(spell.id, { seal: sealOnCopy });
+    item.classList.remove("expanded");
+    const expandedBody = item.querySelector(".spell-expanded-body");
+    if (expandedBody) expandedBody.hidden = true;
+    if (updateBtn) updateBtn.textContent = "Update Spell";
+    toast("Spell copied. Paste into target node chat.", "success");
+  });
+  expandBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const expandedBody = item.querySelector(".spell-expanded-body");
+    const isNowExpanded = expandedBody && !expandedBody.hidden;
+    if (expandedBody) expandedBody.hidden = isNowExpanded;
+    if (expandBtn) expandBtn.textContent = isNowExpanded ? "View" : "Hide";
+  });
+  item.querySelectorAll('[data-action="self-cast"]').forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selfCastSpell(spell.id);
+    });
+  });
+
+  const doExpand = (event) => {
+    if (event?.target?.closest?.("button, a, input, textarea, .spell-actions")) return;
+    const expandedBody = item.querySelector(".spell-expanded-body");
+    if (!expandedBody) return;
+    const showing = !expandedBody.hidden;
+    expandedBody.hidden = showing;
+    if (expandBtn) expandBtn.textContent = showing ? "View" : "Hide";
+  };
+
+  item.addEventListener("click", doExpand);
   item.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {
       if (e.target.closest("button")) return;
       e.preventDefault();
-      void doCopy(e);
+      void doExpand();
     }
   });
 }
@@ -5193,6 +5216,20 @@ els.btnCopyScrollList?.addEventListener("click", async () => {
     console.warn("Copy SCROLL List failed", err);
     toast("Copy failed", "");
   }
+});
+
+els.btnPurgeFocus?.addEventListener("click", () => {
+  const convo = activeConvo();
+  if (!convo) {
+    toast("Select a focus to purge", "");
+    return;
+  }
+  const label = `${convo.name} · ${getSealedChannel(convo)}`;
+  const ok = window.confirm(
+    `Execute Healer purge?\n\n${label}\n\nThis is true annihilation — no tombstone, no history, no recovery. This cannot be undone.`
+  );
+  if (!ok) return;
+  deleteFocus(convo.id);
 });
 
 els.btnAppSettings?.addEventListener("click", () => {
