@@ -1020,9 +1020,14 @@ body.universe-view-active {
 .app.sidebar-collapsed .brand-text,
 .app.sidebar-collapsed .intel-folder-status,
 .app.sidebar-collapsed .sidebar-section-label,
+.app.sidebar-collapsed .focus-org-toolbar,
 .app.sidebar-collapsed .convo-text,
 .app.sidebar-collapsed .btn-new-label,
-.app.sidebar-collapsed .focus-delete-btn {
+.app.sidebar-collapsed .focus-delete-btn,
+.app.sidebar-collapsed .focus-row-actions,
+.app.sidebar-collapsed .focus-group-header,
+.app.sidebar-collapsed .focus-folder-empty,
+.app.sidebar-collapsed .focus-list-empty {
   display: none !important;
 }
 
@@ -1321,6 +1326,191 @@ body.universe-view-active {
   color: var(--text-dim);
 }
 
+/* ─── Focus org QoL: search + folders + pin + DnD ─── */
+
+.focus-org-toolbar {
+  flex: 0 0 auto;
+  order: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0 0.65rem 0.45rem;
+  z-index: 3;
+}
+
+.focus-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.focus-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.45rem 2.2rem 0.45rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(8, 10, 22, 0.75);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.focus-search::placeholder {
+  color: var(--text-dim);
+}
+
+.focus-search:focus {
+  border-color: rgba(167, 139, 250, 0.55);
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.12);
+}
+
+.focus-search-count {
+  position: absolute;
+  right: 0.45rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.focus-org-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.btn-focus-org {
+  flex: 1;
+  padding: 0.3rem 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.btn-focus-org:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(167, 139, 250, 0.08);
+}
+
+.focus-list-empty {
+  padding: 0.85rem 0.6rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.focus-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0.35rem 0.25rem;
+  margin-top: 0.35rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid transparent;
+}
+
+.focus-group-header:hover,
+.focus-group-header.drag-over {
+  background: rgba(167, 139, 250, 0.08);
+  border-color: rgba(167, 139, 250, 0.2);
+  color: var(--text-muted);
+}
+
+.focus-group-header.collapsed .focus-group-name {
+  opacity: 0.75;
+}
+
+.focus-group-pinned {
+  color: var(--gold);
+  margin-top: 0.15rem;
+}
+
+.focus-group-toggle {
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 0.65rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.focus-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.focus-group-count {
+  font-size: 0.6rem;
+  opacity: 0.7;
+  min-width: 1rem;
+  text-align: right;
+}
+
+.focus-group-action {
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.65rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms, color 120ms;
+}
+
+.focus-group-header:hover .focus-group-action {
+  opacity: 1;
+}
+
+.focus-group-action:hover {
+  color: var(--text);
+}
+
+.focus-group-action.danger:hover {
+  color: #f87171;
+}
+
+.focus-folder-empty {
+  margin: 0 0.2rem 0.25rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.focus-folder-empty.drag-over {
+  border-color: rgba(167, 139, 250, 0.5);
+  background: rgba(167, 139, 250, 0.08);
+  color: var(--accent);
+}
+
 .convo-list {
   flex: 1;
   order: 1;
@@ -1339,17 +1529,36 @@ body.universe-view-active {
   width: 100%;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), opacity var(--transition), transform var(--transition);
   border: 1px solid transparent;
+  cursor: grab;
+}
+
+.convo-item.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.convo-item.drag-over {
+  border-color: rgba(167, 139, 250, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.15);
+}
+
+.convo-item.pinned {
+  border-color: rgba(240, 215, 140, 0.12);
+}
+
+.convo-item.pinned.active {
+  border-color: var(--border-strong);
 }
 
 .convo-item-main {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.55rem;
   flex: 1;
   min-width: 0;
-  padding: 0.65rem 1.75rem 0.65rem 0.7rem;
+  padding: 0.55rem 0.35rem 0.55rem 0.55rem;
   text-align: left;
   color: inherit;
   border-radius: var(--radius-sm);
@@ -1370,36 +1579,105 @@ body.universe-view-active {
   box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.08);
 }
 
-/* Focus delete ✕ — permanent, confirmed */
+/* Row action strip: pin · tags · export · delete */
+.focus-row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
+  padding: 4px 3px 4px 0;
+  opacity: 0;
+  transition: opacity 150ms;
+  z-index: 2;
+}
+
+.convo-item:hover .focus-row-actions,
+.convo-item:focus-within .focus-row-actions,
+.convo-item.active .focus-row-actions {
+  opacity: 1;
+}
+
+.focus-action-btn,
 .convo-item .focus-delete-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.35);
-  color: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.3);
+  color: rgba(255, 255, 255, 0.45);
   font-size: 10px;
   line-height: 16px;
   text-align: center;
   padding: 0;
-  opacity: 0;
-  transition: opacity 150ms, background 150ms, color 150ms, border-color 150ms;
-  z-index: 2;
   cursor: pointer;
+  transition: background 150ms, color 150ms, border-color 150ms;
 }
 
-.convo-item:hover .focus-delete-btn,
-.convo-item .focus-delete-btn:focus {
-  opacity: 1;
+.focus-action-btn:hover {
+  background: rgba(167, 139, 250, 0.35);
+  border-color: rgba(167, 139, 250, 0.55);
+  color: #fff;
+}
+
+.focus-action-btn.on {
+  color: var(--gold);
+  border-color: rgba(240, 215, 140, 0.4);
+  background: rgba(240, 215, 140, 0.12);
 }
 
 .convo-item .focus-delete-btn:hover {
   background: rgba(220, 50, 50, 0.45);
   border-color: rgba(220, 50, 50, 0.75);
   color: #fff;
+}
+
+.convo-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.convo-pin-mark {
+  color: var(--gold);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.convo-updated,
+.convo-links {
+  color: var(--text-dim);
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+}
+
+.convo-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  margin-top: 0.2rem;
+}
+
+.convo-tag {
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  padding: 0.08rem 0.28rem;
+  border-radius: 999px;
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  background: rgba(120, 80, 220, 0.12);
+  color: var(--accent);
+  text-transform: none;
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.convo-badge.unread {
+  background: rgba(240, 215, 140, 0.22);
+  color: var(--gold);
 }
 
 .convo-icon {
@@ -1444,7 +1722,10 @@ body.universe-view-active {
 }
 
 .convo-meta {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.65rem;
   color: var(--text-dim);
   margin-top: 0.08rem;
@@ -2174,6 +2455,27 @@ body.universe-view-active .message.system {
 .spell-item.spell-history {
   opacity: 0.92;
   border-color: rgba(52, 211, 153, 0.18);
+}
+
+.spell-item.spell-primary {
+  border-color: rgba(167, 139, 250, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.12), 0 0 18px rgba(167, 139, 250, 0.12);
+}
+
+.spell-item.spell-primary .status-badge {
+  background: rgba(167, 139, 250, 0.32);
+  color: #d4c4ff;
+  border-color: rgba(167, 139, 250, 0.55);
+}
+
+.spell-item.spell-hold {
+  opacity: 0.55;
+  filter: grayscale(0.25);
+}
+
+.spell-item.spell-hold:hover {
+  opacity: 0.72;
+  filter: grayscale(0.1);
 }
 
 /* Send icon button */
@@ -3266,8 +3568,12 @@ body.universe-view-active .message.system {
   .brand h1,
   .brand-sub,
   .sidebar-section-label,
+  .focus-org-toolbar,
   .convo-text,
-  .convo-badge {
+  .convo-badge,
+  .focus-row-actions,
+  .focus-group-header,
+  .focus-folder-empty {
     display: none;
   }
 
