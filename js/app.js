@@ -197,6 +197,8 @@ const els = {
   editModelLabel: $("#edit-model-label"),
   editArchetypeLabel: $("#edit-archetype-label"),
   btnCancelEdit: $("#btn-cancel-edit"),
+  btnEditFocus: $("#btn-edit-focus"),
+  btnCopyScrollList: $("#btn-copy-scroll-list"),
   appSettingsPanel: $("#app-settings-panel"),
   btnAppSettings: $("#btn-app-settings"),
   btnAppSettingsClose: $("#btn-app-settings-close"),
@@ -5160,6 +5162,37 @@ els.newType?.addEventListener("change", () => {
 });
 els.editType?.addEventListener("change", () => {
   els.editModelLabel.hidden = els.editType.value !== "ai";
+});
+
+els.btnEditFocus?.addEventListener("click", () => {
+  openEditDialog?.();
+});
+
+els.btnCopyScrollList?.addEventListener("click", async () => {
+  const convo = activeConvo();
+  if (!convo) {
+    toast("Select a focus first", "");
+    return;
+  }
+  try {
+    const text = buildScrollList(convo, state.spells);
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    toast("SCROLL List copied — paste directly into any AI node", "success");
+  } catch (err) {
+    console.warn("Copy SCROLL List failed", err);
+    toast("Copy failed", "");
+  }
 });
 
 els.btnAppSettings?.addEventListener("click", () => {
