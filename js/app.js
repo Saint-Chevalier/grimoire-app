@@ -188,6 +188,15 @@ const els = {
   newFocusHint: $("#new-focus-hint"),
   newArchetype: $("#new-entity-archetype"),
   btnCancelNew: $("#btn-cancel-new"),
+  editDialog: $("#edit-convo-dialog"),
+  editId: $("#edit-entity-id"),
+  editName: $("#edit-entity-name"),
+  editType: $("#edit-entity-type"),
+  editArchetype: $("#edit-entity-archetype"),
+  editModel: $("#edit-entity-model"),
+  editModelLabel: $("#edit-model-label"),
+  editArchetypeLabel: $("#edit-archetype-label"),
+  btnCancelEdit: $("#btn-cancel-edit"),
   appSettingsPanel: $("#app-settings-panel"),
   btnAppSettings: $("#btn-app-settings"),
   btnAppSettingsClose: $("#btn-app-settings-close"),
@@ -5080,8 +5089,77 @@ els.btnCancelNew?.addEventListener("click", () => {
   els.dialog?.close();
 });
 
-els.btnIntelFolder?.addEventListener("click", () => {
-  onChooseIntelFolder();
+els.editDialog?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  saveFocusEdit();
+});
+els.btnCancelEdit?.addEventListener("click", () => {
+  els.editDialog?.close();
+});
+
+function openEditDialog() {
+  const convo = activeConvo();
+  if (!convo) return;
+  els.editId.value = convo.id;
+  els.editName.value = convo.name || "";
+  els.editType.value = convo.type === "network" ? "network" : convo.type === "ai" ? "ai" : "person";
+  const arch = convo.archetype || (convo.type === "ai" ? "wizard" : convo.type === "network" ? "network" : "person");
+  els.editArchetype.value = arch;
+  const raw = convo.model || convo.channel || "none";
+  els.editModel.value = ["Hermes","Claude","ChatGPT","Grok","Local","Custom"].includes(raw) ? raw : "none";
+  els.editModelLabel.hidden = els.editType.value !== "ai";
+  els.editArchetypeLabel.hidden = false;
+  els.editDialog?.showModal();
+}
+
+function saveFocusEdit() {
+  const convo = state.conversations.find((c) => c.id === els.editId.value);
+  if (!convo) return;
+  const newName = (els.editName.value || "").trim();
+  if (!newName) {
+    toast("Focus name required", "");
+    return;
+  }
+  const newType = els.editType.value === "ai" ? "ai" : els.editType.value === "network" ? "network" : "person";
+  const newArchetype = els.editArchetype.value;
+  const newModel = newType === "ai" ? (els.editModel.value || "none") : "none";
+  const newSealed = newType === "ai"
+    ? (!newModel || newModel === "none" ? "Open" : newModel)
+    : "Open";
+
+  if (
+    newName.toLowerCase().trim() !== convo.name.toLowerCase().trim() ||
+    newSealed.toLowerCase() !== (getSealedChannel(convo) || "Open").toLowerCase()
+  ) {
+    if (focusExists(state.conversations, newName, newSealed)) {
+      toast(`Focus already exists: ${newName} · ${newSealed}`);
+      return;
+    }
+  }
+
+  convo.name = newName;
+  convo.type = newType;
+  convo.archetype = newArchetype;
+  convo.model = newModel;
+  if (newType !== "ai") convo.model = "none";
+
+  const id = makeFocusId(convo.name, getSealedChannel(convo));
+  if (id && id !== convo.id && !state.conversations.some((c) => c.id === id)) {
+    convo.id = id;
+  }
+
+  persist();
+  renderAll();
+  syncFocusIntelligenceFile(convo, "FOCUS_UPDATED", `Updated: ${convo.name} · ${getSealedChannel(convo)}`);
+  els.editDialog?.close();
+  toast(`Updated: ${convo.name} · ${getSealedChannel(convo)}`, "success");
+}
+
+els.newType?.addEventListener("change", () => {
+  syncNewFocusFormChrome();
+});
+els.editType?.addEventListener("change", () => {
+  els.editModelLabel.hidden = els.editType.value !== "ai";
 });
 
 els.btnAppSettings?.addEventListener("click", () => {
