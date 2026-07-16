@@ -147,14 +147,12 @@ const els = {
   universeViewSystemLabels: $("#universe-view-system-labels"),
   btnCloseSpells: $("#btn-close-spells"),
   btnIntelFolder: $("#btn-intel-folder"),
-  btnResetApp: $("#btn-reset-app"),
   vaultFailDot: $("#vault-fail-dot"),
   intelFolderStatus: $("#intel-folder-status"),
-  btnClearAll: $("#btn-clear-all"),
+  brandText: $("#brand-text"),
   spellCount: $("#spell-count") || document.getElementById("spell-count"),
   spellsList: $("#spells-list"),
   spellsHint: $("#spells-hint"),
-  tabSpellsActive: $("#tab-spells-active"),
   tabSpellsHistory: $("#tab-spells-history"),
   complexCraftDialog: $("#complex-craft-dialog"),
   btnComplexCraftClose: $("#btn-complex-craft-close"),
@@ -1561,18 +1559,6 @@ function renderSpells() {
         : "Tap a spell card to copy (seals the cast). Paste the reply into chat to densen, then Cast Spell for the next true priority.";
   }
 
-  if (els.btnClearAll) {
-    els.btnClearAll.disabled = !convo || view === "history" || readyList.length === 0;
-    els.btnClearAll.textContent = view === "history" ? "—" : "Clear Active";
-    els.btnClearAll.title =
-      view === "history"
-        ? "History is sealed — clear only per-card with ✕"
-        : "Clear all active spells for this focus (history kept)";
-  }
-
-  // Reset clear-all confirm UI on re-render
-  if (typeof resetClearAllButton === "function") resetClearAllButton();
-
   if (!convo) {
     els.spellsList.innerHTML = `<div class="spells-empty">Select a focus to see its spells.</div>`;
     return;
@@ -1993,84 +1979,6 @@ function deleteSpell(spellId) {
 /**
  * Two-tap clear-all for current Focus only.
  */
-function requestClearAllSpells() {
-  const convo = activeConvo();
-  if (!convo) return;
-  if (ensureSpellView() === "history") {
-    toast("History is sealed — use Active tab + Clear Active", "");
-    return;
-  }
-  const list = activeSpellsFor(convo.id);
-  if (!list.length) {
-    toast("No active spells to clear", "");
-    return;
-  }
-
-  const key = "clear-all";
-  const btn = els.btnClearAll;
-
-  if (pendingDeletes.has(key)) {
-    clearTimeout(pendingDeletes.get(key));
-    pendingDeletes.delete(key);
-    clearAllSpellsForFocus(convo.id);
-    resetClearAllButton();
-    return;
-  }
-
-  if (btn) {
-    btn.classList.add("confirming");
-    btn.textContent = "CONFIRM CLEAR ACTIVE?";
-    btn.title = "Tap again to wipe active spells (history kept)";
-  }
-  toast("Tap again to confirm", "");
-
-  const t = setTimeout(() => {
-    pendingDeletes.delete(key);
-    resetClearAllButton();
-  }, DELETE_CONFIRM_MS);
-  pendingDeletes.set(key, t);
-}
-
-function resetClearAllButton() {
-  if (pendingDeletes.has("clear-all")) {
-    clearTimeout(pendingDeletes.get("clear-all"));
-    pendingDeletes.delete("clear-all");
-  }
-  if (els.btnClearAll) {
-    els.btnClearAll.classList.remove("confirming");
-    els.btnClearAll.textContent =
-      ensureSpellView() === "history" ? "—" : "Clear Active";
-    els.btnClearAll.title =
-      ensureSpellView() === "history"
-        ? "History is sealed — clear only per-card with ✕"
-        : "Clear all active spells for this focus (history kept)";
-  }
-}
-
-function clearAllSpellsForFocus(focusId) {
-  // Only active — never wipe Cast History
-  const removeIds = new Set(
-    state.spells
-      .filter((s) => s.conversationId === focusId && s.status !== "sent")
-      .map((s) => s.id)
-  );
-  state.spells = state.spells.filter((s) => !removeIds.has(s.id));
-
-  const focus = state.conversations.find((c) => c.id === focusId);
-  if (focus) {
-    focus.messages = (focus.messages || []).filter(
-      (m) => !(m.role === "spell" && removeIds.has(m.spellId))
-    );
-  }
-
-  persist();
-  renderAll();
-  notifyConstellation(focusId, "standard");
-  if (focus) syncFocusIntelligenceFile(focus);
-
-  toast("Active spells cleared — history kept", "success");
-}
-
 // ─── Render: constellation (living intelligence map) ───
 
 /**
@@ -5233,7 +5141,7 @@ els.btnPurgeFocus?.addEventListener("click", () => {
   deleteFocus(convo.id);
 });
 
-els.btnAppSettings?.addEventListener("click", () => {
+els.brandText?.addEventListener("click", () => {
   openAppSettings();
 });
 els.btnAppSettingsClose?.addEventListener("click", () => {
@@ -5244,7 +5152,7 @@ document.addEventListener("click", (e) => {
     els.appSettingsPanel &&
     !els.appSettingsPanel.hasAttribute("hidden") &&
     !e.target.closest("#app-settings-panel") &&
-    !e.target.closest("#btn-app-settings")
+    !e.target.closest("#brand-text")
   ) {
     closeAppSettings();
   }
