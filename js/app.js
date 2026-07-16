@@ -102,13 +102,7 @@ state.universeView = (() => {
   const removed = before - state.conversations.length;
   if (removed > 0) {
     state.spells = (state.spells || []).filter((s) => !removedIds.has(s.conversationId));
-    if (state.activeId && state.conversations.find((c) => c.id === state.activeId)) {
-      // keep active if still valid
-    } else if (state.conversations.length) {
-      state.activeId = state.conversations[0].id;
-    } else {
-      state.activeId = null;
-    }
+    state.activeId = null;
     persist();
   }
 })();

@@ -1437,7 +1437,7 @@ export function loadState() {
   return {
     conversations,
     spells: structuredClone(SEED_SPELLS),
-    activeId: "wizard-king-hermes",
+    activeId: null,
     spellsOpen: true,
     spellView: "active",
     focusFolders: structuredClone(DEFAULT_FOCUS_FOLDERS),
@@ -1612,7 +1612,7 @@ function migrateState(state) {
     state.activeId &&
     !(state.conversations || []).some((c) => c.id === state.activeId)
   ) {
-    state.activeId = state.conversations[0]?.id || "wizard-king-hermes";
+    state.activeId = state.conversations[0]?.id || null;
   }
 
   // Temporal densen: ensure every Focus has a birth time (from first message if needed)
