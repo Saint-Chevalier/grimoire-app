@@ -1225,13 +1225,17 @@ function renderChat() {
   els.chatMessages.innerHTML = "";
 
   if (!convo) {
-    els.entityIcon.textContent = "✧";
-    els.entityName.textContent = "Select a focus";
+    els.entityIcon.textContent = "—";
+    els.entityName.textContent = "—";
     els.entityType.textContent = "—";
     if (els.sealedChannelValue) els.sealedChannelValue.textContent = "—";
     if (els.universeStage) els.universeStage.textContent = "VOID";
+    if (els.spellCount) els.spellCount.textContent = "";
+    if (els.spellCount) els.spellCount.dataset.count = "0";
     setChatControlsEnabled(false);
-    if (els.chatInput) els.chatInput.placeholder = "Select a focus to speak…";
+    if (els.chatInput) els.chatInput.placeholder = "Select a focus to begin casting spells.";
+    if (els.constellationPing) els.constellationPing.textContent = "Select a focus";
+    if (els.universeHudStage) els.universeHudStage.textContent = "VOID · 0% · —";
     const empty =
       els.emptyState ||
       (() => {
@@ -1239,9 +1243,9 @@ function renderChat() {
         d.className = "empty-state";
         d.id = "empty-state";
         d.innerHTML = `
-          <div class="empty-glyph">✧</div>
-          <p>Open a focus. Speak to Grimoire about that focus target.</p>
-          <p class="empty-hint">Spells you craft will appear in the right panel — copy, send, mark as Sent.</p>
+          <div class="empty-glyph">—</div>
+          <p>Select a focus to begin casting spells.</p>
+          <p class="empty-hint">No spells. No history. No connection.</p>
         `;
         els.emptyState = d;
         return d;
