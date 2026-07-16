@@ -147,6 +147,7 @@ const els = {
   spellCount: $("#spell-count") || document.getElementById("spell-count"),
   spellsList: $("#spells-list"),
   spellsHint: $("#spells-hint"),
+  tabSpellsActive: $("#tab-spells-active"),
   tabSpellsHistory: $("#tab-spells-history"),
   complexCraftDialog: $("#complex-craft-dialog"),
   btnComplexCraftClose: $("#btn-complex-craft-close"),
