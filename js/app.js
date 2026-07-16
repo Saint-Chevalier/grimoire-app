@@ -62,6 +62,7 @@ import {
   isIntelligenceSetupComplete,
   focusFileName,
   buildFocusMarkdown,
+  buildScrollList,
 } from "./intelligence.js";
 import {
   computeFocusHealth,
