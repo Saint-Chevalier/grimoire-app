@@ -1417,6 +1417,7 @@ export function loadState() {
       if (parsed?.conversations?.length) {
         // Light migration: ensure AI nodes have alignment directive once
         migrateState(parsed);
+        parsed.activeId = null;
         if (typeof parsed.spellsOpen !== "boolean") {
           parsed.spellsOpen = true;
         }
