@@ -1580,13 +1580,9 @@ function renderSpells() {
   if (view === "history") {
     list.forEach((spell) => {
       const item = document.createElement("article");
-      const showSelf = shouldShowSelfCastButton(spell, convo);
-      // Only stamp true self-cast protocol cards (never curiosity / blanket Focus)
-      if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell) && !isCuriositySpell(spell)) {
-        spell.kind = "self-cast";
-      }
+      const showSelf = false;
       item.className =
-        "spell-item spell-history spell-tap-copy" + (showSelf ? " spell-self-castable" : "");
+        "spell-item spell-history spell-tap-copy";
       item.dataset.spellId = spell.id;
       if (showSelf) item.dataset.selfCast = "1";
       item.setAttribute("role", "button");
