@@ -1693,6 +1693,24 @@ function takePendingImagesForSend() {
 
 // ─── Render: spells panel ───
 
+/** Safe target name chip for spell cards (spell.target = Focus / node name). */
+function spellTargetBadge(spell) {
+  if (!spell || !spell.target) return "";
+  return escapeHtml(String(spell.target));
+}
+
+/**
+ * Linked-node chips under expanded spell body.
+ * Stub: node-link UI is optional; never block render if empty.
+ */
+function scrollListNodeBadgesForSpell(spell, convo) {
+  if (!spell) return "";
+  const target = String(spell.target || "").trim();
+  if (!target) return "";
+  // Single target chip is enough for payload context; full SCROLL LIST is separate path
+  return `<span class="spell-node-badge" title="Target node">${escapeHtml(target)}</span>`;
+}
+
 function renderSpells() {
   try {
     const convo = activeConvo();
