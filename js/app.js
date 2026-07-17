@@ -276,22 +276,174 @@ function spellsFor(convoId) {
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Active queue only — never cast / history entries. */
+/**
+ * Single source of truth: has this spell left the Active queue?
+ * Badge · Active tab · Cast History · pendingCount must all use this.
+ *
+ * Ghost-badge leak: status lagged at "ready" while sentAt/answeredAt/copiedAt
+ * already proved the cast was consumed. Treat lifecycle timestamps as sealed
+ * unless the card was explicitly refilled back to ready.
+ */
+function spellIsSealed(spell) {
+  if (!spell) return true;
+  const st = String(spell.status || "").toLowerCase();
+  if (st === "sent") return true;
+
+  // Fresh refill generation is always Active (rebuild path clears cast stamps)
+  if (spell.rebuilt === true || spell.rebuiltAt) {
+    return false;
+  }
+
+  // Functionally consumed even if status lagged at ready/draft/undefined
+  // (the badge-5 leak: Active tab filtered them elsewhere or status never flipped)
+  if (spell.sentAt || spell.answeredAt || spell.selfCastAt || spell.copiedAt) {
+    return true;
+  }
+
+  return false;
+}
+
+/** True when spell belongs in Active (CAST THIS / hold) queue. */
+function spellIsActiveQueue(spell) {
+  if (!spell) return false;
+  if (spellIsSealed(spell)) return false;
+  if (isReceiptSpell(spell)) return false;
+  if (typeof purposeLooksLikeHoldLoop === "function" && purposeLooksLikeHoldLoop(spell.purpose)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Promote lagged lifecycle → status:"sent" so localStorage stops re-leaking badges.
+ * Also strip cast stamps from refilled cards so Active stays clean.
+ * Returns true if any spell mutated.
+ */
+function healSpellLifecycles(spells = state.spells) {
+  let changed = false;
+  for (const s of spells || []) {
+    if (!s) continue;
+
+    // Refilled generation: strip cast stamps; force back to ready if needed
+    if (s.rebuilt || s.rebuiltAt) {
+      if (String(s.status || "").toLowerCase() === "sent") {
+        s.status = "ready";
+        changed = true;
+      }
+      if (s.sentAt || s.answeredAt || s.selfCastAt || s.copiedAt) {
+        s.sentAt = undefined;
+        s.answeredAt = undefined;
+        s.selfCastAt = undefined;
+        s.copiedAt = undefined;
+        changed = true;
+      }
+      continue;
+    }
+
+    if (String(s.status || "").toLowerCase() === "sent") continue;
+    if (!spellIsSealed(s)) continue;
+
+    s.status = "sent";
+    s.sentAt = s.sentAt || s.answeredAt || s.selfCastAt || s.copiedAt || Date.now();
+    s.copiedAt = s.copiedAt || s.sentAt;
+    changed = true;
+  }
+  return changed;
+}
+
+/** Active queue only — never cast / history / receipt / hold-loop sludge. */
 function activeSpellsFor(convoId) {
   return spellsFor(convoId)
-    .filter((s) => s.status !== "sent")
+    .filter((s) => spellIsActiveQueue(s))
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
 /** Cast History — sealed casts, newest answer first. */
 function historySpellsFor(convoId) {
   return spellsFor(convoId)
-    .filter((s) => s.status === "sent")
-    .sort((a, b) => (b.sentAt || b.createdAt || 0) - (a.sentAt || a.createdAt || 0));
+    .filter((s) => spellIsSealed(s) && !isReceiptSpell(s))
+    .sort((a, b) => (b.sentAt || b.answeredAt || b.createdAt || 0) - (a.sentAt || a.answeredAt || a.createdAt || 0));
 }
 
 function pendingCount(convoId) {
   return activeSpellsFor(convoId).length;
+}
+
+/**
+ * Header + sidebar badge MUST equal Active-tab card count for this Focus.
+ * Call after heal + activeSpellsFor so numbers never drift.
+ */
+function syncSpellCountBadges(focusId, readyCount) {
+  const n = Math.max(0, Number(readyCount) || 0);
+
+  const countEl = els.spellCount || document.getElementById("spell-count");
+  if (countEl) {
+    countEl.textContent = n > 0 ? String(n) : "";
+    countEl.dataset.count = String(n);
+    countEl.title = n > 0 ? `${n} ready spell${n === 1 ? "" : "s"}` : "No ready spells";
+  }
+
+  // Only rewrite the active Focus row (other focuses keep their own pending)
+  if (!focusId || focusId !== state.activeId) return;
+  const row = document.querySelector(`.convo-item[data-focus-id="${focusId}"]`);
+  if (!row) return;
+  const main = row.querySelector(".convo-item-main");
+  if (!main) return;
+
+  let badge = main.querySelector(".convo-badge");
+  if (n > 0) {
+    if (!badge) {
+      badge = document.createElement("span");
+      main.appendChild(badge);
+    }
+    badge.className = "convo-badge";
+    badge.title = `${n} ready spell${n === 1 ? "" : "s"}`;
+    badge.textContent = String(n);
+  } else if (badge) {
+    // Drop spell badge when Active is empty (don't leave a ghost 5)
+    badge.remove();
+  }
+}
+
+/**
+ * Force top-right + every sidebar Focus badge from the ACTIVE predicate only
+ * (activeSpellsFor / spellIsActiveQueue). Call at end of renderSpells after heal.
+ */
+function syncFocusBadges() {
+  const activeId = state.activeId || null;
+  const topReady = activeId ? activeSpellsFor(activeId).length : 0;
+
+  const countEl = els.spellCount || document.getElementById("spell-count");
+  if (countEl) {
+    countEl.textContent = topReady > 0 ? String(topReady) : "";
+    countEl.dataset.count = String(topReady);
+    countEl.title =
+      topReady > 0
+        ? `${topReady} ready spell${topReady === 1 ? "" : "s"}`
+        : "No ready spells";
+  }
+
+  document.querySelectorAll(".convo-item[data-focus-id]").forEach((row) => {
+    const focusId = row.dataset.focusId;
+    if (!focusId) return;
+    const n = activeSpellsFor(focusId).length;
+    const main = row.querySelector(".convo-item-main");
+    if (!main) return;
+
+    let badge = main.querySelector(".convo-badge");
+    if (n > 0) {
+      if (!badge) {
+        badge = document.createElement("span");
+        main.appendChild(badge);
+      }
+      badge.className = "convo-badge";
+      badge.title = `${n} ready spell${n === 1 ? "" : "s"}`;
+      badge.textContent = String(n);
+    } else {
+      // Empty Active queue → drop numeric spell badge (keep .unread message chips)
+      main.querySelectorAll(".convo-badge:not(.unread)").forEach((el) => el.remove());
+    }
+  });
 }
 
 /** Short human time for spell lifecycle chips. */
@@ -609,6 +761,7 @@ function sortFocusesForDisplay(list) {
 }
 
 function renderConvoList() {
+  console.log('[badge-debug] activeId:', state.activeId, 'pending:', (state.spells || []).filter(s => s.conversationId === state.activeId && s.status !== 'sent').length, 'spells total:', (state.spells || []).filter(s => s.conversationId === state.activeId).length);
   if (!els.convoList) return;
   els.convoList.innerHTML = "";
 
@@ -805,11 +958,17 @@ function buildFocusRow(c, { folderId } = {}) {
   const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
   btn.title = `${c.name} · ${channel} (sealed)${tagStr}${rel ? ` · updated ${rel}` : ""}`;
 
+  // Spell badge first (same truth as Active tab / top-right count).
+  // Unread is a secondary dim chip so it never masquerades as ready spells.
   const badgeParts = [];
-  if (unread > 0) {
-    badgeParts.push(`<span class="convo-badge unread" title="${unread} unread">${unread}</span>`);
-  } else if (pending > 0) {
-    badgeParts.push(`<span class="convo-badge" title="${pending} ready spells">${pending}</span>`);
+  if (pending > 0) {
+    badgeParts.push(
+      `<span class="convo-badge" title="${pending} ready spell${pending === 1 ? "" : "s"}">${pending}</span>`
+    );
+  } else if (unread > 0) {
+    badgeParts.push(
+      `<span class="convo-badge unread" title="${unread} unread message${unread === 1 ? "" : "s"}">${unread}</span>`
+    );
   }
 
   const tagsHtml = tags.length
@@ -1520,171 +1679,197 @@ function takePendingImagesForSend() {
 // ─── Render: spells panel ───
 
 function renderSpells() {
-  const convo = activeConvo();
-  // Self-heal: drop junk receipt/echo cards so the panel stays cast-ready
-  if (convo) stripReceiptSpells(convo.id);
+  try {
+    const convo = activeConvo();
+    // Self-heal FIRST so badge + Active list share one post-heal truth
+    if (convo) stripReceiptSpells(convo.id);
+    if (healSpellLifecycles()) persist();
 
-  const view = ensureSpellView();
-  const readyList = convo ? activeSpellsFor(convo.id) : [];
-  const histList = convo ? historySpellsFor(convo.id) : [];
-  const list = view === "history" ? histList : readyList;
-  const pending = readyList.length;
-  const total = convo ? spellsFor(convo.id).length : 0;
+    const view = ensureSpellView();
+    const readyList = convo ? activeSpellsFor(convo.id) : [];
+    const histList = convo ? historySpellsFor(convo.id) : [];
+    const list = view === "history" ? histList : readyList;
 
-  // Sidebar / header spell count for active Focus (active only)
-  const countEl = els.spellCount || document.getElementById("spell-count");
-  if (countEl) {
-    const n = pending > 0 ? pending : 0;
-    countEl.textContent = n > 0 ? String(n) : "";
-    countEl.dataset.count = String(n);
-  }
+    // Badge = Active queue length only (0 when list empty — no ghost 5)
+    syncSpellCountBadges(convo?.id || null, readyList.length);
 
-  // Tabs
-  els.tabSpellsActive?.classList.toggle("active", view === "active");
-  els.tabSpellsHistory?.classList.toggle("active", view === "history");
-  if (els.tabSpellsActive) {
-    els.tabSpellsActive.setAttribute("aria-selected", view === "active" ? "true" : "false");
-  }
-  if (els.tabSpellsHistory) {
-    els.tabSpellsHistory.setAttribute("aria-selected", view === "history" ? "true" : "false");
-    els.tabSpellsHistory.textContent = histList.length
-      ? `Cast History (${histList.length})`
-      : "Cast History";
-  }
-  if (els.spellsHint) {
-    els.spellsHint.textContent =
-      view === "history"
-        ? "Tap a card to copy · sealed history. Double-tap ✕ only to prune sludge."
-        : "Tap a spell card to copy (seals the cast). Paste the reply into chat to densen, then Cast Spell for the next true priority.";
-  }
+    // Tabs
+    els.tabSpellsActive?.classList.toggle("active", view === "active");
+    els.tabSpellsHistory?.classList.toggle("active", view === "history");
+    if (els.tabSpellsActive) {
+      els.tabSpellsActive.setAttribute("aria-selected", view === "active" ? "true" : "false");
+    }
+    if (els.tabSpellsHistory) {
+      els.tabSpellsHistory.setAttribute("aria-selected", view === "history" ? "true" : "false");
+      els.tabSpellsHistory.textContent = histList.length
+        ? `Cast History (${histList.length})`
+        : "Cast History";
+    }
+    if (els.spellsHint) {
+      els.spellsHint.textContent =
+        view === "history"
+          ? "Tap a card to copy · sealed history. Double-tap ✕ only to prune sludge."
+          : "Tap a spell card to copy (seals the cast). Paste the reply into chat to densen, then Cast Spell for the next true priority.";
+    }
 
-  if (!convo) {
-    els.spellsList.innerHTML = `<div class="spells-empty">Select a focus to see its spells.</div>`;
-    return;
-  }
+    if (!convo) {
+      els.spellsList.innerHTML = `<div class="spells-empty">Select a focus to see its spells.</div>`;
+      syncSpellCountBadges(null, 0);
+      return;
+    }
 
-  if (!list.length) {
-    els.spellsList.innerHTML = `<div class="spells-empty">${
-      view === "history"
-        ? "No cast history yet.<br/>Tap a READY spell card to copy — it drops here with timestamps."
-        : isAiNode(convo) && !convoAlignmentUnlocked(convo)
-          ? "Cast Spell for <strong>Alignment Reveal</strong>, or state intent in chat."
-          : isAiNode(convo)
-            ? "State intent in chat or hit <strong>Cast Spell</strong> to forge a directive."
-            : "Talk to Grimoire — clear intent auto-casts a spell."
-    }</div>`;
-    return;
-  }
+    if (!list.length) {
+      els.spellsList.innerHTML = `<div class="spells-empty">${
+        view === "history"
+          ? "No cast history yet.<br/>Tap a READY spell card to copy — it drops here with timestamps."
+          : isAiNode(convo) && !convoAlignmentUnlocked(convo)
+            ? "Cast Spell for <strong>Alignment Reveal</strong>, or state intent in chat."
+            : isAiNode(convo)
+              ? "State intent in chat or hit <strong>Cast Spell</strong> to forge a directive."
+              : "Talk to Grimoire — clear intent auto-casts a spell."
+      }</div>`;
+      // Empty Active ⇒ badges must be 0 (fixes ghost sidebar 5)
+      if (view === "active") syncSpellCountBadges(convo.id, 0);
+      return;
+    }
 
-  els.spellsList.innerHTML = "";
-  if (view === "history") {
-    list.forEach((spell) => {
+    els.spellsList.innerHTML = "";
+    if (view === "history") {
+      list.forEach((spell) => {
+        const item = document.createElement("article");
+        const showSelf = false;
+        item.className =
+          "spell-item spell-history spell-tap-copy";
+        item.dataset.spellId = spell.id;
+        if (showSelf) item.dataset.selfCast = "1";
+        item.setAttribute("role", "button");
+        item.setAttribute("tabindex", "0");
+        item.title = "Tap to copy spell";
+        const md = formatSpellMarkdown(spell);
+        const badgeText = spell.rebuilt ? "REFILLED" : escapeHtml(spell.status || "sent");
+        const timeLine = [
+          spell.createdAt ? `forged ${formatSpellTime(spell.createdAt)}` : "",
+          spell.copiedAt ? `copied ${formatSpellTime(spell.copiedAt)}` : "",
+          spell.sentAt ? `cast ${formatSpellTime(spell.sentAt)}` : "",
+          spell.answeredAt ? `answered ${formatSpellTime(spell.answeredAt)}` : "",
+        ]
+          .filter(Boolean)
+          .map(escapeHtml)
+          .join(" · ");
+        item.innerHTML = `
+          <button type="button" class="delete-btn" data-action="delete" title="Prune from history (two-tap)">✕</button>
+          ${spellCardTopHtml(spell, convo, { badgeClass: "status-badge sent", badgeText })}
+          <p class="spell-essence">${escapeHtml(spell.essence)}</p>
+          ${timeLine ? `<div class="spell-timestamps">${timeLine}</div>` : ""}
+          ${spellActionsHtml(spell, convo, { isSent: true })}
+          <pre class="spell-full">${escapeHtml(md)}</pre>
+        `;
+        wireSpellCardActions(item, spell, { sealOnCopy: false });
+        els.spellsList.appendChild(item);
+      });
+      return;
+    }
+
+    // Active view = priority ladder
+    const primary = readyList[0];
+    const rest = readyList.slice(1);
+    els.spellsList.innerHTML = "";
+
+    function appendSpellCard(spell, mode) {
       const item = document.createElement("article");
-      const showSelf = false;
+      const isSent = spell.status === "sent";
+      const showSelf = shouldShowSelfCastButton(spell, convo);
+      if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell) && !isCuriositySpell(spell)) {
+        spell.kind = "self-cast";
+      }
       item.className =
-        "spell-item spell-history spell-tap-copy";
+        "spell-item spell-tap-copy" +
+        (isSent ? " spell-history" : "") +
+        (mode === "primary" ? " spell-primary" : " spell-hold") +
+        (showSelf ? " spell-self-castable" : "");
       item.dataset.spellId = spell.id;
       if (showSelf) item.dataset.selfCast = "1";
       item.setAttribute("role", "button");
       item.setAttribute("tabindex", "0");
-      item.title = "Tap to copy spell";
+      item.title = "Tap to expand / Update Spell";
       const md = formatSpellMarkdown(spell);
-      const badgeText = spell.rebuilt ? "REFILLED" : escapeHtml(spell.status || "sent");
-      const timeLine = [
-        spell.createdAt ? `forged ${formatSpellTime(spell.createdAt)}` : "",
-        spell.copiedAt ? `copied ${formatSpellTime(spell.copiedAt)}` : "",
-        spell.sentAt ? `cast ${formatSpellTime(spell.sentAt)}` : "",
-        spell.answeredAt ? `answered ${formatSpellTime(spell.answeredAt)}` : "",
-      ]
-        .filter(Boolean)
-        .map(escapeHtml)
-        .join(" · ");
+      const badgeClass = isSent
+        ? "status-badge sent"
+        : spell.rebuilt
+          ? "status-badge rebuilt"
+          : `status-badge ${spell.status || "ready"}`;
+      const badgeText = isSent
+        ? "CAST"
+        : spell.rebuilt
+          ? "REFILLED"
+          : mode === "primary"
+            ? "CAST THIS"
+            : escapeHtml(spell.status || "ready");
+      const timeBits = [];
+      if (spell.createdAt) timeBits.push(`forged ${formatSpellTime(spell.createdAt)}`);
+      if (spell.rebuiltAt && !isSent) timeBits.push(`refilled ${formatSpellTime(spell.rebuiltAt)}`);
+      if (spell.copiedAt) timeBits.push(`copied ${formatSpellTime(spell.copiedAt)}`);
+      if (spell.sentAt) timeBits.push(`cast ${formatSpellTime(spell.sentAt)}`);
+      if (spell.answeredAt) timeBits.push(`answered ${formatSpellTime(spell.answeredAt)}`);
+      const timeLine = timeBits.length
+        ? `<div class="spell-timestamps">${escapeHtml(timeBits.join(" · "))}</div>`
+        : "";
+      const targetBadge = spellTargetBadge(spell, convo);
+      const scrollNodeBadges = isSent ? "" : scrollListNodeBadgesForSpell(spell, convo);
       item.innerHTML = `
-        <button type="button" class="delete-btn" data-action="delete" title="Prune from history (two-tap)">✕</button>
-        ${spellCardTopHtml(spell, convo, { badgeClass: "status-badge sent", badgeText })}
-        <p class="spell-essence">${escapeHtml(spell.essence)}</p>
-        ${timeLine ? `<div class="spell-timestamps">${timeLine}</div>` : ""}
-        ${spellActionsHtml(spell, convo, { isSent: true })}
-        <pre class="spell-full">${escapeHtml(md)}</pre>
-      `;
-      wireSpellCardActions(item, spell, { sealOnCopy: false });
-      els.spellsList.appendChild(item);
-    });
-    return;
-  }
-
-  // Active view = priority ladder
-  const primary = readyList[0];
-  const rest = readyList.slice(1);
-  els.spellsList.innerHTML = "";
-
-  function appendSpellCard(spell, mode) {
-    const item = document.createElement("article");
-    const isSent = spell.status === "sent";
-    const showSelf = shouldShowSelfCastButton(spell, convo);
-    if (showSelf && spell.kind !== "self-cast" && !isAlignmentSpell(spell) && !isCuriositySpell(spell)) {
-      spell.kind = "self-cast";
-    }
-    item.className =
-      "spell-item spell-tap-copy" +
-      (isSent ? " spell-history" : "") +
-      (mode === "primary" ? " spell-primary" : " spell-hold") +
-      (showSelf ? " spell-self-castable" : "");
-    item.dataset.spellId = spell.id;
-    if (showSelf) item.dataset.selfCast = "1";
-    item.setAttribute("role", "button");
-    item.setAttribute("tabindex", "0");
-    item.title = "Tap to expand / Update Spell";
-    const md = formatSpellMarkdown(spell);
-    const badgeClass = isSent
-      ? "status-badge sent"
-      : spell.rebuilt
-        ? "status-badge rebuilt"
-        : `status-badge ${spell.status || "ready"}`;
-    const badgeText = isSent
-      ? "CAST"
-      : spell.rebuilt
-        ? "REFILLED"
-        : mode === "primary"
-          ? "CAST THIS"
-          : escapeHtml(spell.status || "ready");
-    const timeBits = [];
-    if (spell.createdAt) timeBits.push(`forged ${formatSpellTime(spell.createdAt)}`);
-    if (spell.rebuiltAt && !isSent) timeBits.push(`refilled ${formatSpellTime(spell.rebuiltAt)}`);
-    if (spell.copiedAt) timeBits.push(`copied ${formatSpellTime(spell.copiedAt)}`);
-    if (spell.sentAt) timeBits.push(`cast ${formatSpellTime(spell.sentAt)}`);
-    if (spell.answeredAt) timeBits.push(`answered ${formatSpellTime(spell.answeredAt)}`);
-    const timeLine = timeBits.length
-      ? `<div class="spell-timestamps">${escapeHtml(timeBits.join(" · "))}</div>`
-      : "";
-    const targetBadge = spellTargetBadge(spell, convo);
-    const scrollNodeBadges = isSent ? "" : scrollListNodeBadgesForSpell(spell, convo);
-    item.innerHTML = `
-      <button type="button" class="delete-btn" data-action="delete" title="${isSent ? "Prune from history (two-tap)" : "Delete spell"}">✕</button>
-      ${spellCardTopHtml(spell, convo, { badgeClass, badgeText })}
-      <div class="spell-collapsed-meta">
-        ${targetBadge ? `<span class="spell-target-badge">${targetBadge}</span>` : ""}
-        ${escapeHtml(spell.purpose || "<i>untitled</i>")}
-      </div>
-      <div class="spell-expanded-body" hidden>
-        <pre class="spell-full">${escapeHtml(md)}</pre>
-        <div class="spell-node-links">${scrollNodeBadges || '<span class="spell-node-empty">No linked nodes</span>'}</div>
-        <div class="spell-expanded-actions">
-          <button type="button" class="btn-spell edit" data-action="edit" title="Edit spell">Edit</button>
-          <button type="button" class="btn-spell delete" data-action="delete" title="Delete spell">Delete</button>
-          <button type="button" class="btn-spell update" data-action="update" title="Update Spell — copies text, collapses">Update Spell</button>
+        <button type="button" class="delete-btn" data-action="delete" title="${isSent ? "Prune from history (two-tap)" : "Delete spell"}">✕</button>
+        ${spellCardTopHtml(spell, convo, { badgeClass, badgeText })}
+        <div class="spell-collapsed-meta">
+          ${targetBadge ? `<span class="spell-target-badge">${targetBadge}</span>` : ""}
+          ${escapeHtml(spell.purpose || "<i>untitled</i>")}
         </div>
-      </div>
-      ${timeLine}
-    `;
-    wireSpellCardActions(item, spell, { sealOnCopy: !isSent, convo });
-    els.spellsList.appendChild(item);
-  }
+        <div class="spell-expanded-body" hidden>
+          <pre class="spell-full">${escapeHtml(md)}</pre>
+          <div class="spell-node-links">${scrollNodeBadges || '<span class="spell-node-empty">No linked nodes</span>'}</div>
+          <div class="spell-expanded-actions">
+            <button type="button" class="btn-spell edit" data-action="edit" title="Edit spell">Edit</button>
+            <button type="button" class="btn-spell delete" data-action="delete" title="Delete spell">Delete</button>
+            <button type="button" class="btn-spell update" data-action="update" title="Update Spell — copies text, collapses">Update Spell</button>
+          </div>
+        </div>
+        ${timeLine}
+      `;
+      wireSpellCardActions(item, spell, { sealOnCopy: !isSent, convo });
+      els.spellsList.appendChild(item);
+    }
 
-  if (primary) {
-    appendSpellCard(primary, "primary");
+    if (primary) {
+      try {
+        appendSpellCard(primary, "primary");
+      } catch (err) {
+        console.warn("spell card render failed", primary?.id, err);
+      }
+    }
+    rest.forEach((spell) => {
+      try {
+        appendSpellCard(spell, "hold");
+      } catch (err) {
+        console.warn("spell card render failed", spell?.id, err);
+      }
+    });
+
+    // Final truth: badge = cards actually in the Active DOM (never theoretical)
+    const painted = els.spellsList.querySelectorAll(".spell-item").length;
+    syncSpellCountBadges(convo.id, painted);
+    // If we counted ready spells but painted none, demote zombies so state matches UI
+    if (painted === 0 && readyList.length > 0) {
+      for (const s of readyList) {
+        s.status = "sent";
+        s.sentAt = s.sentAt || Date.now();
+        s.copiedAt = s.copiedAt || s.sentAt;
+      }
+      persist();
+      syncSpellCountBadges(convo.id, 0);
+    }
+  } finally {
+    // Sovereign badge lock: sidebar + top-right always match ACTIVE predicate post-heal
+    syncFocusBadges();
   }
-  rest.forEach((spell) => appendSpellCard(spell, "hold"));
 }
 
 /** Brand-new forge: ready, never refilled, never copied/cast. */
@@ -1972,8 +2157,54 @@ function deleteSpell(spellId) {
 }
 
 /**
- * Two-tap clear-all for current Focus only.
+ * Two-tap clear-all for current Focus only — seals/removes Active queue spells.
+ * History (status sent) is kept.
  */
+function requestClearAllSpells() {
+  const convo = activeConvo();
+  if (!convo) {
+    toast("Select a focus first", "");
+    return;
+  }
+  const key = "clear-all";
+  if (pendingDeletes.has(key)) {
+    clearTimeout(pendingDeletes.get(key));
+    pendingDeletes.delete(key);
+    els.btnClearAll?.classList.remove("confirming");
+
+    const ready = activeSpellsFor(convo.id);
+    const removeIds = new Set(ready.map((s) => s.id));
+    state.spells = state.spells.filter((s) => {
+      if (s.conversationId !== convo.id) return true;
+      if (!removeIds.has(s.id)) return true;
+      return false; // drop active queue entirely
+    });
+    // Strip embedded spell messages for removed ids
+    convo.messages = (convo.messages || []).filter(
+      (m) => !(m.role === "spell" && removeIds.has(m.spellId))
+    );
+
+    persist();
+    renderAll();
+    syncFocusIntelligenceFile(convo, "SPELLS_CLEARED", `Cleared ${removeIds.size} active spell(s)`);
+    toast(
+      removeIds.size
+        ? `Cleared ${removeIds.size} active spell${removeIds.size === 1 ? "" : "s"} — history kept`
+        : "No active spells to clear",
+      "success"
+    );
+    return;
+  }
+
+  els.btnClearAll?.classList.add("confirming");
+  toast("Tap Clear Active again to confirm", "");
+  const t = setTimeout(() => {
+    pendingDeletes.delete(key);
+    els.btnClearAll?.classList.remove("confirming");
+  }, DELETE_CONFIRM_MS);
+  pendingDeletes.set(key, t);
+}
+
 // ─── Render: constellation (living intelligence map) ───
 
 /**
@@ -2101,6 +2332,9 @@ function spellTypeForFocus(convo, spell) {
 }
 
 function renderAll() {
+  // Heal lifecycle BEFORE any badge math (sidebar was counting pre-heal zombies)
+  if (healSpellLifecycles()) persist();
+
   // Keep panel class + toggle button in sync with state
   const appEl = els.app || document.querySelector(".app");
   if (appEl) appEl.classList.toggle("spells-collapsed", !state.spellsOpen);
@@ -2110,7 +2344,7 @@ function renderAll() {
   applyUniverseViewMode();
   renderConvoList();
   renderChat();
-  renderSpells();
+  renderSpells(); // re-syncs header + active-focus sidebar badge from Active queue
   renderLittleChat();
   renderStars();
   updateAttachButtonState();
@@ -3905,9 +4139,11 @@ function commitSpell(convo, spell, { silentToast = false } = {}) {
       rebuilt: true,
       rebuiltAt: Date.now(),
       status: "ready",
+      // Fresh active generation — do not inherit cast/answer stamps (badge leak)
       sentAt: undefined,
-      copiedAt: existing.copiedAt,
-      answeredAt: existing.answeredAt,
+      copiedAt: undefined,
+      answeredAt: undefined,
+      selfCastAt: undefined,
     });
     rebuilt = true;
   } else if (sealedSame) {
@@ -5235,6 +5471,8 @@ state.conversations.forEach((c) => {
   c.messages = (c.messages || []).filter((m) => m.kind !== "focus-suggestion");
   ensureAlignmentDirective(c);
 });
+// Promote ghost-cast spells (lifecycle stamps without status:"sent") so badges match Active
+healSpellLifecycles();
 persist();
 
 // Universe Engine — canvas cosmos behind HUD (force starfield on boot)
