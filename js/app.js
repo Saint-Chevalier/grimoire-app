@@ -280,26 +280,18 @@ function spellsFor(convoId) {
  * Single source of truth: has this spell left the Active queue?
  * Badge · Active tab · Cast History · pendingCount must all use this.
  *
- * Ghost-badge leak: status lagged at "ready" while sentAt/answeredAt/copiedAt
- * already proved the cast was consumed. Treat lifecycle timestamps as sealed
- * unless the card was explicitly refilled back to ready.
+ * Sealed = status "sent" OR any cast lifecycle stamp (sentAt/answeredAt/selfCastAt/copiedAt).
+ * Refill clears those stamps and sets status "ready" — only then is it active again.
+ * Never treat rebuiltAt alone as active (that inflated button badge toward total).
  */
 function spellIsSealed(spell) {
   if (!spell) return true;
   const st = String(spell.status || "").toLowerCase();
   if (st === "sent") return true;
-
-  // Fresh refill generation is always Active (rebuild path clears cast stamps)
-  if (spell.rebuilt === true || spell.rebuiltAt) {
-    return false;
-  }
-
-  // Functionally consumed even if status lagged at ready/draft/undefined
-  // (the badge-5 leak: Active tab filtered them elsewhere or status never flipped)
+  // Any lifecycle stamp = functionally cast (even if status lagged)
   if (spell.sentAt || spell.answeredAt || spell.selfCastAt || spell.copiedAt) {
     return true;
   }
-
   return false;
 }
 
@@ -312,6 +304,17 @@ function spellIsActiveQueue(spell) {
     return false;
   }
   return true;
+}
+
+/**
+ * Active-ready count only — NEVER total spells for a Focus.
+ * Same sealed-aware predicate Scroll specified for the spell button badge.
+ */
+function activeReadyCount(convoId) {
+  if (!convoId) return 0;
+  return (state.spells || []).filter(
+    (s) => s.conversationId === convoId && !spellIsSealed(s) && spellIsActiveQueue(s)
+  ).length;
 }
 
 /**
@@ -366,7 +369,25 @@ function historySpellsFor(convoId) {
 }
 
 function pendingCount(convoId) {
-  return activeSpellsFor(convoId).length;
+  // Same bucket as Active tab / top spell button — never total history
+  return activeReadyCount(convoId);
+}
+
+/**
+ * Write active-ready N into #spell-count (top spell button).
+ * Never total spells. Never Cast History length. 0 → hide.
+ */
+function setSpellButtonBadge(activeReady) {
+  const n = Math.max(0, Number(activeReady) || 0);
+  const countEl =
+    els.spellCount ||
+    document.getElementById("spell-count") ||
+    document.querySelector("#btn-toggle-spells .spell-count");
+  if (!countEl) return;
+  countEl.textContent = n > 0 ? String(n) : "";
+  countEl.dataset.count = String(n);
+  countEl.title =
+    n > 0 ? `${n} ready spell${n === 1 ? "" : "s"} (Active queue)` : "No ready spells";
 }
 
 /**
@@ -374,14 +395,13 @@ function pendingCount(convoId) {
  * Call after heal + activeSpellsFor so numbers never drift.
  */
 function syncSpellCountBadges(focusId, readyCount) {
-  const n = Math.max(0, Number(readyCount) || 0);
+  // Ignore caller if they pass total-by-mistake — recompute from ACTIVE predicate
+  const n =
+    focusId != null
+      ? activeReadyCount(focusId)
+      : Math.max(0, Number(readyCount) || 0);
 
-  const countEl = els.spellCount || document.getElementById("spell-count");
-  if (countEl) {
-    countEl.textContent = n > 0 ? String(n) : "";
-    countEl.dataset.count = String(n);
-    countEl.title = n > 0 ? `${n} ready spell${n === 1 ? "" : "s"}` : "No ready spells";
-  }
+  setSpellButtonBadge(n);
 
   // Only rewrite the active Focus row (other focuses keep their own pending)
   if (!focusId || focusId !== state.activeId) return;
@@ -399,39 +419,35 @@ function syncSpellCountBadges(focusId, readyCount) {
     badge.className = "convo-badge";
     badge.title = `${n} ready spell${n === 1 ? "" : "s"}`;
     badge.textContent = String(n);
-  } else if (badge) {
-    // Drop spell badge when Active is empty (don't leave a ghost 5)
-    badge.remove();
+  } else {
+    main.querySelectorAll(".convo-badge:not(.unread)").forEach((el) => el.remove());
   }
 }
 
 /**
- * Force top-right + every sidebar Focus badge from the ACTIVE predicate only
- * (activeSpellsFor / spellIsActiveQueue). Call at end of renderSpells after heal.
+ * Force top-right + every sidebar Focus badge from ACTIVE-ready only
+ * (never total spellsFor length). Call at end of renderSpells after heal.
  */
 function syncFocusBadges() {
   const activeId = state.activeId || null;
-  const topReady = activeId ? activeSpellsFor(activeId).length : 0;
+  // Scroll spec: conversationId match + !spellIsSealed (+ Active queue filters)
+  const activeReady = activeId
+    ? (state.spells || []).filter(
+        (s) => s.conversationId === activeId && !spellIsSealed(s) && spellIsActiveQueue(s)
+      ).length
+    : 0;
 
-  const countEl = els.spellCount || document.getElementById("spell-count");
-  if (countEl) {
-    countEl.textContent = topReady > 0 ? String(topReady) : "";
-    countEl.dataset.count = String(topReady);
-    countEl.title =
-      topReady > 0
-        ? `${topReady} ready spell${topReady === 1 ? "" : "s"}`
-        : "No ready spells";
-  }
+  setSpellButtonBadge(activeReady);
 
   document.querySelectorAll(".convo-item[data-focus-id]").forEach((row) => {
     const focusId = row.dataset.focusId;
     if (!focusId) return;
-    const n = activeSpellsFor(focusId).length;
+    const n = activeReadyCount(focusId);
     const main = row.querySelector(".convo-item-main");
     if (!main) return;
 
-    let badge = main.querySelector(".convo-badge");
     if (n > 0) {
+      let badge = main.querySelector(".convo-badge");
       if (!badge) {
         badge = document.createElement("span");
         main.appendChild(badge);
@@ -761,7 +777,6 @@ function sortFocusesForDisplay(list) {
 }
 
 function renderConvoList() {
-  console.log('[badge-debug] activeId:', state.activeId, 'pending:', (state.spells || []).filter(s => s.conversationId === state.activeId && s.status !== 'sent').length, 'spells total:', (state.spells || []).filter(s => s.conversationId === state.activeId).length);
   if (!els.convoList) return;
   els.convoList.innerHTML = "";
 
@@ -1853,21 +1868,10 @@ function renderSpells() {
       }
     });
 
-    // Final truth: badge = cards actually in the Active DOM (never theoretical)
-    const painted = els.spellsList.querySelectorAll(".spell-item").length;
-    syncSpellCountBadges(convo.id, painted);
-    // If we counted ready spells but painted none, demote zombies so state matches UI
-    if (painted === 0 && readyList.length > 0) {
-      for (const s of readyList) {
-        s.status = "sent";
-        s.sentAt = s.sentAt || Date.now();
-        s.copiedAt = s.copiedAt || s.sentAt;
-      }
-      persist();
-      syncSpellCountBadges(convo.id, 0);
-    }
+    // Never use painted DOM length here — History view paints sealed cards;
+    // button badge must stay Active-ready only (set in finally via syncFocusBadges).
   } finally {
-    // Sovereign badge lock: sidebar + top-right always match ACTIVE predicate post-heal
+    // Sovereign badge lock: top-right + sidebar = activeReadyCount only (not total)
     syncFocusBadges();
   }
 }
