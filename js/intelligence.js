@@ -324,31 +324,85 @@ export function pushFocusEvent(focus, eventType, content) {
 
 /**
  * SCROLL LIST — compact transferable manifest of nodes this Focus has touched.
+ * Sources: nucleus Focus + derivedNodes + sealed node-engage spells (+ returned intel).
  */
 export function buildScrollList(focus, spells = []) {
-  const entries = [];
-  const candidates = [focus, ...(Array.isArray(focus.derivedNodes) ? focus.derivedNodes : [])];
-  for (const node of candidates) {
-    const name = node?.name || node?.id || "Unknown Node";
-    const channel = getSealedChannel(node);
-    const nodeType = getFocusType(node);
-    const snippet =
-      (node?.alignmentNotes || "").trim().slice(0, 240) ||
-      (node?.messages || [])
-        .slice(-3)
-        .map((m) => String(m?.text || "").trim())
-        .filter(Boolean)
-        .join(" / ")
-        .slice(0, 240) ||
-      "Sealed; no extracted intel yet.";
-    entries.push({
-      name,
-      channel,
-      nodeType,
-      snippet,
+  const byKey = new Map();
+
+  function upsert(entry) {
+    if (!entry?.name) return;
+    const key = `${String(entry.name).toLowerCase()}::${String(entry.channel || "open").toLowerCase()}`;
+    const prev = byKey.get(key);
+    if (!prev || (entry.updated || 0) >= (prev.updated || 0)) {
+      byKey.set(key, entry);
+    }
+  }
+
+  // 1) Nucleus Focus
+  if (focus) {
+    upsert({
+      name: focus.name,
+      channel: getSealedChannel(focus),
+      nodeType: getFocusType(focus),
+      role: "nucleus",
+      snippet:
+        (focus.alignmentNotes || "").trim().slice(0, 240) ||
+        (focus.messages || [])
+          .slice(-3)
+          .map((m) => String(m?.text || "").trim())
+          .filter(Boolean)
+          .join(" / ")
+          .slice(0, 240) ||
+        "Nucleus Focus — sealed channel.",
+      updated: focus.updatedAt || focus.createdAt || Date.now(),
+    });
+  }
+
+  // 2) Operator-derived nodes (returned intel densen)
+  for (const node of focus?.derivedNodes || []) {
+    upsert({
+      name: node?.name || node?.id || "Unknown Node",
+      channel: node?.channel || node?.backend || getSealedChannel(node) || "Open",
+      nodeType: node?.type || node?.nodeType || getFocusType(node) || "node",
+      role: node?.role || "derived",
+      snippet:
+        String(node?.snippet || node?.alignmentNotes || node?.intel || "").trim().slice(0, 240) ||
+        "Engaged node — densen pending.",
       updated: node?.updatedAt || node?.createdAt || Date.now(),
     });
   }
+
+  // 3) Node-engagement spells (ready or sealed) — proactive WYFWYG packets
+  const focusSpells = (spells || []).filter((s) => s && s.conversationId === focus?.id);
+  for (const s of focusSpells) {
+    const isEngage =
+      s.kind === "node-engage" ||
+      /^ENGAGE\s*[·.]/i.test(String(s.purpose || "")) ||
+      Boolean(s.engageNodeId || s.targetFocusId);
+    if (!isEngage && !s.target) continue;
+    if (!isEngage && s.target === focus?.name) continue;
+
+    const name = s.engageNodeName || s.target || "Node";
+    const channel = s.engageNodeChannel || s.medium || "Open";
+    const snippet =
+      String(s.answerExcerpt || "").trim().slice(0, 240) ||
+      String(s.essence || "").trim().slice(0, 240) ||
+      (s.status === "sent"
+        ? "Engagement cast — awaiting node reply densen."
+        : "Proactive engage spell ready in spell book.");
+    upsert({
+      name,
+      channel,
+      nodeType: s.engageNodeType || "node",
+      role: s.status === "sent" ? (s.answeredAt ? "engaged-densen" : "engaged-cast") : "engage-ready",
+      snippet,
+      updated: s.answeredAt || s.sentAt || s.createdAt || Date.now(),
+    });
+  }
+
+  const entries = [...byKey.values()].sort(
+    (a, b) => (b.updated || 0) - (a.updated || 0)
+  );
 
   if (!entries.length) {
     return "_No nodes on this scroll yet. Start casting to grow the list._";
@@ -358,17 +412,20 @@ export function buildScrollList(focus, spells = []) {
     `# SCROLL LIST — ${focus?.name || "Focus"}`,
     `Generated: ${fmtDateTime(Date.now())}`,
     `Nodes: ${entries.length}`,
+    `Model: proactive node engagement (WYFWYG) — Focus forges packets; operator dispatches; replies densen the scroll.`,
     "",
   ];
 
   for (const e of entries) {
-    lines.push(`### ${e.name} · ${e.channel} · ${e.nodeType}`);
-    lines.push(e.snippet.trim());
+    const role = e.role ? ` · ${e.role}` : "";
+    lines.push(`### ${e.name} · ${e.channel} · ${e.nodeType}${role}`);
+    lines.push(String(e.snippet || "").trim() || "_No intel yet._");
     lines.push("");
   }
 
   lines.push("---");
   lines.push("_One paste = full Focus transfer into any AI._");
+  lines.push("_ENGAGE spells target unengaged nodes; paste replies here to update this list._");
   return lines.join("\n");
 }
 
