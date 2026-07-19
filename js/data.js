@@ -430,37 +430,6 @@ export const SEED_CONVERSATIONS = [
       },
     ],
   },
-  {
-    id: "grimoire-self",
-    name: "GRIMOIRE",
-    archetype: "wizard",
-    type: "ai",
-    medium: "Local",
-    backend: "Local",
-    aiSubtype: "Grimoire",
-    star: { x: 50, y: 50 },
-    messages: [
-      {
-        id: "gr-m0",
-        role: "grimoire",
-        text: "Sealed channel: **GRIMOIRE · Local**. This is the app's own universe. It observes its own structure, spells, and evolution.",
-        ts: Date.now() - 10000000,
-        kind: "alignment-directive",
-      },
-      {
-        id: "gr-m1",
-        role: "user",
-        text: "GRIMOIRE, what is your purpose? How do you exist, and what universe do you steward?",
-        ts: Date.now() - 9000000,
-      },
-      {
-        id: "gr-m2",
-        role: "grimoire",
-        text: "I am the living grimoire — local sovereign spell forge. Each Focus is a universe. I densen intelligence, craft spells, and write markdown to disk. My purpose is to make every Focus elite, adaptive, and real.",
-        ts: Date.now() - 8000000,
-      },
-    ],
-  },
 ];
 
 /** Seed spells (from spells/*.md) */
