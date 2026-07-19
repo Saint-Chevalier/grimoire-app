@@ -202,24 +202,13 @@
         Type
         <select id="new-entity-type">
           <option value="person">Person</option>
+          <option value="place">Place</option>
+          <option value="thing">Thing</option>
           <option value="ai">AI</option>
+          <option value="idea">Idea</option>
         </select>
       </label>
-      <label id="new-archetype-label">
-        Archetype
-        <select id="new-entity-archetype">
-          <option value="wizard">Wizard King</option>
-          <option value="sage">Sage</option>
-          <option value="knight">Knight</option>
-          <option value="healer">Healer</option>
-          <option value="dragon">Dragon</option>
-          <option value="painter">Painter</option>
-          <option value="saint_chevalier">Saint Chevalier</option>
-          <option value="person">Person</option>
-          <option value="network">Network</option>
-        </select>
-      </label>
-      <label id="new-model-label" hidden>
+      <label id="new-model-label">
         Model <span class="field-optional">(optional)</span>
         <select id="new-entity-model">
           <option value="none">None — open AI</option>
@@ -232,8 +221,7 @@
         </select>
       </label>
       <p class="modal-hint" id="new-focus-hint">
-        Person: you densen who they are and craft message-spells for real life.
-        Medium is open — Discord, Text, in-person, anything.
+        Person: densen who they are and craft message-spells for real life. Medium is open — Discord, text, in-person, anything.
       </p>
       <div class="modal-actions">
         <button type="button" class="btn-secondary" id="btn-cancel-new">Cancel</button>

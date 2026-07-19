@@ -183,7 +183,6 @@ const els = {
   newModelLabel: $("#new-model-label"),
   newModel: $("#new-entity-model"),
   newFocusHint: $("#new-focus-hint"),
-  newArchetype: $("#new-entity-archetype"),
   btnCancelNew: $("#btn-cancel-new"),
   editDialog: $("#edit-convo-dialog"),
   editId: $("#edit-entity-id"),
@@ -3500,9 +3499,15 @@ function syncNewFocusFormChrome() {
   const isAi = t === "ai";
   if (els.newModelLabel) els.newModelLabel.hidden = !isAi;
   if (els.newFocusHint) {
-    els.newFocusHint.textContent = isAi
-      ? "AI: densen this node and craft curated words-as-magic. Model is optional — Hermes, Grok, Claude, Custom, or open. Medium of delivery is whatever surface you choose."
-      : "Person: densen who they are and craft message-spells for real life. Medium is open — Discord, text, in-person, anything.";
+    const typeVal = els.newType?.value || "person";
+    const hints = {
+      person: "Person: densen who they are and craft message-spells for real life. Medium is open — Discord, text, in-person, anything.",
+      place: "Place: anchor a location and its intelligence. Speak about this site, its history, and its secrets.",
+      thing: "Thing: object, system, artifact, or tool. Track its behavior, upgrades, and role in your world.",
+      ai: "AI: densen this node and craft curated words-as-magic. Model is optional — Hermes, Grok, Claude, Custom, or open.",
+      idea: "Idea: concept, philosophy, or framework. Build it into doctrine, spawn spells, and test it against reality.",
+    };
+    els.newFocusHint.textContent = hints[typeVal] || hints.person;
   }
 }
 
@@ -5333,22 +5338,14 @@ function markSent(id, { fromCopy = false, fromSelfCast = false, silent = false }
   );
 }
 
-function createConversation({ name, type, archetype, model } = {}) {
+function createConversation({ name, type, model } = {}) {
   if (!name) return;
-  let t = type || archetype || "person";
-  if (t !== "ai") t = "person"; // create path is person | ai only
+  const t = (type || "person");
+  if (!["person", "place", "thing", "ai", "idea"].includes(t)) return;
   const rawModel = t === "ai" ? (model || "none") : "none";
   const sealed = t === "ai"
     ? (!rawModel || rawModel === "none" ? "Open" : rawModel)
     : "Open";
-  const archetypeKey =
-    t === "ai"
-      ? ["wizard", "sage", "knight", "healer", "dragon", "painter", "saint_chevalier"].includes(archetype)
-        ? archetype
-        : "wizard"
-      : archetype === "network"
-        ? "network"
-        : "person";
 
   // One Focus = one name + identity (model for AI, open for person)
   if (focusExists(state.conversations, name.trim(), sealed)) {
@@ -5386,7 +5383,11 @@ function createConversation({ name, type, archetype, model } = {}) {
     messages.push({
       id: uid("msg"),
       role: "grimoire",
-      text: `Person Focus sealed: **${name.trim()}**. Speak about them and yourself. Cast Spell crafts communication — medium is open (Discord, text, email, in-person, anything).`,
+      text: `${
+        t === "place" ? "Place" : t === "thing" ? "Thing" : t === "idea" ? "Idea" : "Person"
+      } Focus sealed: **${name.trim()}**. Speak about ${
+        t === "place" ? "this location" : t === "thing" ? "this object/system" : t === "idea" ? "this concept" : "them"
+      } and yourself. Cast Spell crafts communication — medium is open.`,
       ts: Date.now(),
     });
   }
@@ -5394,7 +5395,6 @@ function createConversation({ name, type, archetype, model } = {}) {
   const convo = {
     id,
     name: name.trim(),
-    archetype: archetypeKey,
     type: t,
     star: randomStarPosition(state.conversations),
     messages,
@@ -5990,10 +5990,9 @@ els.newForm?.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = (els.newName?.value || "").trim();
   if (!name) return;
-  const type = els.newType?.value === "ai" ? "ai" : "person";
-  const archetype = els.newArchetype?.value || (type === "ai" ? "wizard" : "person");
+  const type = els.newType?.value || "person";
   const model = type === "ai" ? (els.newModel?.value || "none") : "none";
-  createConversation({ name, type, archetype, model });
+  createConversation({ name, type, model });
   els.dialog?.close();
 });
 

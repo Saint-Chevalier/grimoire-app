@@ -151,8 +151,8 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
   let t = type || getFocusType(convo);
   if (t === "ai-node") t = "ai";
   if (t === "broadcast") t = "network";
-  // New creates are person | ai only; preserve legacy network focuses
-  if (t !== "ai" && t !== "network") t = "person";
+  const valid = ["person", "place", "thing", "ai", "idea", "network", "eternal-intelligence"];
+  if (!valid.includes(t)) t = "person";
   convo.type = t;
 
   if (convo.type === "ai") {
@@ -168,7 +168,7 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
     convo.model = sealed === "Open" ? "none" : sealed;
     convo.aiSubtype = sealed === "Open" ? undefined : sealed;
     convo.backend = sealed;
-    convo.medium = sealed; // spell format still shows optional model when set
+    convo.medium = sealed;
     convo.archetype = sealed === "Open" ? "wizard" : archetypeFromType("ai", sealed);
   } else if (convo.type === "network") {
     const sealed =
@@ -179,7 +179,6 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
     convo.medium = sealed;
     convo.archetype = "network";
   } else {
-    convo.type = "person";
     convo.model = undefined;
     convo.aiSubtype = undefined;
     convo.backend = "Open";
