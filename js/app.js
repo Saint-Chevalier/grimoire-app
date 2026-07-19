@@ -5498,6 +5498,10 @@ els.chatInput?.addEventListener("paste", (e) => {
 
 els.chatInput?.addEventListener("input", autoResizeTextarea);
 
+els.btnIntelFolder?.addEventListener("click", async () => {
+  await onChooseIntelFolder();
+});
+
 // Complex spell little chat (spells panel) — separate from main Focus chat
 els.littleChatForm?.addEventListener("submit", (e) => {
   e.preventDefault();
