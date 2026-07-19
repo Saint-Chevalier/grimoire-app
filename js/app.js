@@ -199,6 +199,10 @@ const els = {
   appSettingsPanel: $("#app-settings-panel"),
   btnAppSettings: $("#btn-app-settings"),
   btnAppSettingsClose: $("#btn-app-settings-close"),
+  galleryDialog: $("#gallery-dialog"),
+  galleryBody: $("#gallery-body"),
+  btnGalleryClose: $("#btn-gallery-close"),
+  btnOpenGallery: $("#btn-open-gallery"),
   toast: $("#toast"),
 };
 
@@ -5841,9 +5845,101 @@ function openAppSettings() {
   els.appSettingsPanel.removeAttribute("hidden");
   toast("App settings opened", "");
 }
+
 function closeAppSettings() {
   if (!els.appSettingsPanel) return;
   els.appSettingsPanel.setAttribute("hidden", "");
+}
+
+/* ─── EVG ─── */
+
+function openGallery() {
+  const convo = activeConvo();
+  if (!convo) {
+    toast("Select a focus first", "");
+    return;
+  }
+  renderGallery(convo);
+  try {
+    els.galleryDialog?.showModal?.();
+  } catch {
+    els.galleryDialog?.removeAttribute?.("hidden");
+  }
+}
+
+function closeGallery() {
+  try {
+    els.galleryDialog?.close?.();
+  } catch {
+    els.galleryDialog?.setAttribute?.("hidden", "");
+  }
+}
+
+function renderGallery(convo) {
+  const container = els.galleryBody;
+  if (!container) return;
+  const items = [];
+  for (const m of (convo.messages || [])) {
+    for (const img of (m.images || [])) {
+      items.push({
+        src: img,
+        text: (m.text || "").trim(),
+        ts: m.ts,
+        role: m.role,
+      });
+    }
+  }
+  if (!items.length) {
+    container.innerHTML = `<p class="gallery-empty">No images captured for this Focus yet.</p>`;
+    return;
+  }
+  container.innerHTML = "";
+  const grid = document.createElement("div");
+  grid.className = "gallery-grid";
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "gallery-card";
+    const imgEl = document.createElement("img");
+    imgEl.src = item.src;
+    imgEl.alt = "Focus-captured image";
+    imgEl.loading = "lazy";
+    const caption = document.createElement("div");
+    caption.className = "gallery-caption";
+    const roleText = item.role === "user" ? "YOU" : item.role === "grimoire" ? "GRIMOIRE" : item.role || "—";
+    const dateText = item.ts ? new Date(item.ts).toLocaleString() : "";
+    caption.innerHTML = `
+      <div class="gallery-meta">${escapeHtml(roleText)}${dateText ? ` · ${escapeHtml(dateText)}` : ""}</div>
+      <div class="gallery-intel">${escapeHtml(item.text.slice(0, 240))}${item.text.length > 240 ? "…" : ""}</div>
+    `;
+    card.appendChild(imgEl);
+    card.appendChild(caption);
+    card.addEventListener("click", () => {
+      openGalleryLightbox(item);
+    });
+    grid.appendChild(card);
+  }
+  container.appendChild(grid);
+}
+
+function openGalleryLightbox(item) {
+  const overlay = document.createElement("div");
+  overlay.className = "gallery-lightbox";
+  overlay.innerHTML = `
+    <button type="button" class="gallery-lightbox-close" aria-label="Close">×</button>
+    <div class="gallery-lightbox-body">
+      <img src="${escapeAttr(item.src)}" alt="Focus-captured image" />
+      <div class="gallery-lightbox-intel">
+        <div class="gallery-meta">${escapeHtml(item.role === "user" ? "YOU" : item.role === "grimoire" ? "GRIMOIRE" : (item.role || "—"))}${item.ts ? ` · ${escapeHtml(new Date(item.ts).toLocaleString())}` : ""}</div>
+        <div class="gallery-intel">${escapeHtml(item.text || "")}</div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay || e.target.closest(".gallery-lightbox-close")) {
+      overlay.remove();
+    }
+  });
 }
 
 els.btnSidebarToggle?.addEventListener("click", () => {
@@ -5858,6 +5954,14 @@ els.focusSearch?.addEventListener("search", () => {
 });
 els.btnNewFolder?.addEventListener("click", () => {
   createFocusFolder();
+});
+
+els.btnOpenGallery?.addEventListener("click", () => {
+  openGallery();
+});
+
+els.btnGalleryClose?.addEventListener("click", () => {
+  closeGallery();
 });
 
 function resetApp() {

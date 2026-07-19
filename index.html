@@ -90,6 +90,9 @@
           <button type="button" class="btn-icon danger" id="btn-purge-focus" title="Healer purge — true annihilation, no tombstone, no history" aria-label="Purge Focus">
             <span aria-hidden="true">✕</span>
           </button>
+          <button type="button" class="btn-icon" id="btn-open-gallery" title="Eternal Visual Gallery — every captured image for this Focus" aria-label="Open Image Gallery">
+            <span aria-hidden="true">🖼</span>
+          </button>
           <button type="button" class="btn-icon" id="btn-universe-view" title="Hide chat — view universe only (stars · lines · Focus nucleus)" aria-label="Hide chat, view universe only" aria-pressed="false">
             <span class="universe-view-icon" aria-hidden="true">☉</span>
           </button>
@@ -354,6 +357,17 @@
       </div>
     </div>
   </div>
+
+  <!-- EVG modal -->
+  <dialog id="gallery-dialog" class="modal gallery-modal">
+    <header class="gallery-header">
+      <h2>Eternal Visual Gallery</h2>
+      <button type="button" class="gallery-close" id="btn-gallery-close" aria-label="Close gallery">×</button>
+    </header>
+    <div class="gallery-body" id="gallery-body">
+      <p class="gallery-empty">No images captured for this Focus yet.</p>
+    </div>
+  </dialog>
 
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
