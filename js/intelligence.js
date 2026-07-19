@@ -613,8 +613,16 @@ function deriveIntelligenceBullets(focus, spells) {
  *   true only when browser has no directory picker at all.
  */
 export async function writeFocusIntelligence(focus, spells = [], opts = {}) {
-  const content = buildFocusMarkdown(focus, spells);
-  const name = focusFileName(focus);
+  // opts.content / opts.fileName: allow SCROLL LIST manifests and other vault sidecars
+  const content =
+    typeof opts.content === "string"
+      ? opts.content
+      : typeof focus?._scrollListContent === "string"
+        ? focus._scrollListContent
+        : buildFocusMarkdown(focus, spells);
+  const name =
+    (typeof opts.fileName === "string" && opts.fileName.trim()) ||
+    focusFileName(focus);
   const fsAvailable = hasDirectoryPicker();
   const allowDownload =
     opts.allowDownload === true || (!fsAvailable && opts.allowDownload !== false);

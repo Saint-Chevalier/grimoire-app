@@ -35,6 +35,7 @@ import {
   sealedChannelLabel,
   STORAGE_KEY,
   suggestFocusFolderId,
+  ensureScrollFocus,
 } from "./data.js";
 import {
   randomStarPosition,
@@ -76,6 +77,8 @@ const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
 // ─── State ───
 
 const state = loadState();
+// SCROLL eternal-intelligence Focus (idempotent seed after load)
+ensureScrollFocus(state);
 // Focus org UI (search is ephemeral; folders + pin/tags persist via saveState)
 if (!Array.isArray(state.focusFolders) || !state.focusFolders.length) {
   state.focusFolders = structuredClone(DEFAULT_FOCUS_FOLDERS);
@@ -513,6 +516,7 @@ function stampSpellAnsweredFromIngest(convo, userText) {
   newest.answerExcerpt = t.replace(/\s+/g, " ").trim().slice(0, 280);
   // Knowledge update: sealed engage + returned intel → SCROLL LIST / vault
   densenScrollListFromEngage(convo, newest, t);
+  void writeScrollListToVault(convo);
 }
 
 function persist() {
@@ -952,12 +956,15 @@ function buildFocusRow(c, { folderId } = {}) {
   const pending = pendingCount(c.id);
   const unread = unreadCount(c);
   const channel = getSealedChannel(c);
+  const ft = getFocusType(c);
   const typeTag =
-    getFocusType(c) === "ai"
+    ft === "ai"
       ? "AI"
-      : getFocusType(c) === "network"
+      : ft === "network"
         ? "Network"
-        : "Person";
+        : ft === "eternal-intelligence"
+          ? "eternal-intelligence"
+          : "Person";
   const updated = focusLastUpdated(c);
   const rel = formatRelativeTime(updated);
   const links = linkedNodeCount(c);
@@ -1912,6 +1919,17 @@ function renderSpells() {
   } finally {
     // Sovereign badge lock: top-right + sidebar = activeReadyCount only (not total)
     syncFocusBadges();
+    // General derivedNodes auto-population + SCROLL LIST vault write
+    const convo = activeConvo();
+    if (convo) {
+      const before = (convo.derivedNodes || []).length;
+      populateDerivedNodesFromSpells(convo);
+      if ((convo.derivedNodes || []).length !== before) {
+        convo.updatedAt = Date.now();
+        persist();
+      }
+      void writeScrollListToVault(convo);
+    }
   }
 }
 
@@ -2804,6 +2822,8 @@ function selectConvo(id) {
     ensureAlignmentDirective(convo);
     ensureFocusOrgFields(convo, { assignFolder: false });
     convo.lastViewedAt = Date.now();
+    populateDerivedNodesFromSpells(convo);
+    void writeScrollListToVault(convo);
   }
   persist();
   // Warp to this Focus's universe — always paint starfield for this Focus
@@ -4109,18 +4129,90 @@ function registerEngageOnScrollList(convo, spell) {
       `${String(n?.name || "").toLowerCase()}::${String(n?.channel || "").toLowerCase()}` ===
       key
   );
-  if (exists) return;
-  convo.derivedNodes.push({
-    id: spell.engageNodeId || spell.targetFocusId || key,
-    name,
-    channel,
-    type: spell.engageNodeType || "node",
-    role: "engaged-cast",
-    snippet: "Engagement cast — awaiting node reply densen.",
-    updatedAt: Date.now(),
-    lastSpellId: spell.id,
-  });
-  convo.updatedAt = Date.now();
+  if (!exists) {
+    convo.derivedNodes.push({
+      id: spell.engageNodeId || spell.targetFocusId || key,
+      name,
+      channel,
+      type: spell.engageNodeType || "node",
+      role: "engaged-cast",
+      snippet: "Engagement cast — awaiting node reply densen.",
+      updatedAt: Date.now(),
+      lastSpellId: spell.id,
+    });
+    convo.updatedAt = Date.now();
+  }
+  // General spell targets/mediums also densen onto derivedNodes
+  populateDerivedNodesFromSpells(convo);
+}
+
+/**
+ * Auto-populate derivedNodes from all spell targets/mediums for a Focus.
+ * Complements ENGAGE densen — general casts also surface on the SCROLL LIST.
+ */
+function populateDerivedNodesFromSpells(convo) {
+  if (!convo || !Array.isArray(state.spells)) return;
+  if (!Array.isArray(convo.derivedNodes)) convo.derivedNodes = [];
+  // Track name::channel, name::open, and id so re-entry stays idempotent
+  // (nodes store real medium as channel while insert key is always name::open).
+  const seen = new Set();
+  for (const n of convo.derivedNodes) {
+    const nm = String(n?.name || "").toLowerCase();
+    const ch = String(n?.channel || "").toLowerCase();
+    if (nm) {
+      seen.add(`${nm}::${ch}`);
+      seen.add(`${nm}::open`);
+    }
+    if (n?.id) seen.add(String(n.id).toLowerCase());
+  }
+  for (const spell of state.spells) {
+    if (spell.conversationId !== convo.id) continue;
+    const name = spell.target || spell.medium;
+    if (!name || String(name).toLowerCase() === String(convo.name || "").toLowerCase())
+      continue;
+    const key = `${String(name).toLowerCase()}::open`;
+    if (seen.has(key)) continue;
+    convo.derivedNodes.push({
+      id: key,
+      name: String(name),
+      channel: spell.medium || spell.target || "Open",
+      type: "node",
+      role: "spell-target",
+      snippet: `Spell target detected from ${spell.kind || "standard"} cast.`,
+      updatedAt: Date.now(),
+      lastSpellId: spell.id,
+    });
+    seen.add(key);
+  }
+  if (convo.derivedNodes.length > 40) {
+    convo.derivedNodes = convo.derivedNodes
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      .slice(0, 40);
+  }
+}
+
+/**
+ * Write the SCROLL LIST as a standalone vault manifest file.
+ * Uses writeFocusIntelligence with opts.fileName + opts.content.
+ */
+async function writeScrollListToVault(convo) {
+  if (!convo) return { ok: false, reason: "no-convo" };
+  const text = buildScrollList(
+    convo,
+    (state.spells || []).filter((s) => s.conversationId === convo.id)
+  );
+  const fileName = `SCROLL-LIST-${String(convo.name || convo.id || "UNKNOWN")
+    .replace(/[^a-zA-Z0-9-_ ]/g, "")
+    .trim()}.md`;
+  try {
+    const result = await writeFocusIntelligence(convo, state.spells, {
+      fileName,
+      content: text,
+    });
+    return result;
+  } catch {
+    return { ok: false, reason: "write-failed" };
+  }
 }
 
 function escapeRegExp(s) {
@@ -5143,6 +5235,9 @@ async function copySpell(id, { seal = true } = {}) {
     ta.remove();
   }
   spell.copiedAt = Date.now();
+  // densen general spell targets onto derivedNodes on successful copy
+  const copyConvo = state.conversations.find((c) => c.id === spell.conversationId);
+  if (copyConvo) populateDerivedNodesFromSpells(copyConvo);
   // Automagic cast close: Copy of an active spell == sent into the world
   if (seal && spell.status !== "sent") {
     markSent(id, { fromCopy: true });

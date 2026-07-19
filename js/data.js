@@ -49,6 +49,7 @@ export const ALIGNMENT_PURPOSE = "TRANSPARENCY & ALIGNMENT REVEAL";
 export function getFocusType(convo) {
   if (!convo) return "person";
   const t = convo.type;
+  if (t === "eternal-intelligence") return "eternal-intelligence";
   if (t === "ai" || t === "ai-node") return "ai";
   if (t === "network" || t === "broadcast") return "network";
   if (t === "person") return "person";
@@ -92,6 +93,17 @@ export function getSealedChannel(focus) {
   if (!focus) return "—";
   const t = getFocusType(focus);
   if (t === "person") return "Open";
+  // SCROLL / eternal intelligence — Hermes channel by default
+  if (t === "eternal-intelligence") {
+    return (
+      focus.channel ||
+      focus.backend ||
+      focus.medium ||
+      focus.aiSubtype ||
+      focus.model ||
+      "Hermes"
+    );
+  }
   // legacy networks keep stored backend if present
   if (t === "network") {
     return focus.backend || focus.medium || "Network";
@@ -181,11 +193,43 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
 export function sealedChannelLabel(focus) {
   const t = getFocusType(focus);
   const ch = getSealedChannel(focus);
+  if (t === "eternal-intelligence") {
+    return `eternal-intelligence · ${ch}`;
+  }
   if (t === "ai") {
     return ch === "Open" ? "AI · Open model" : `AI · ${ch}`;
   }
   if (t === "network") return `Network · ${ch}`;
   return "Person · Open medium";
+}
+
+/**
+ * Seed the SCROLL eternal-intelligence Focus once if missing.
+ * Call after state load (migrate or fresh seed).
+ */
+export function ensureScrollFocus(state) {
+  if (!state) return;
+  const exists = (state.conversations || []).some((c) =>
+    /^scroll$/i.test(c.name || c.id || "")
+  );
+  if (exists) return;
+  const focus = {
+    id: "scroll",
+    name: "SCROLL",
+    type: "eternal-intelligence",
+    channel: "Hermes",
+    medium: "Hermes",
+    backend: "Hermes",
+    aiSubtype: "Hermes",
+    status: "active",
+    derivedNodes: [],
+    messages: [],
+    alignmentProfile: { directives: [] },
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  state.conversations = [focus, ...(state.conversations || [])];
+  state.activeId = focus.id;
 }
 
 /** Seed focuses — each backend/medium is its own sealed Focus */
@@ -1426,6 +1470,7 @@ export function loadState() {
         }
         // Drop layout-regression flag if present
         delete parsed.sidebarCollapsed;
+        ensureScrollFocus(parsed);
         return parsed;
       }
     }
@@ -1435,7 +1480,7 @@ export function loadState() {
   const conversations = structuredClone(SEED_CONVERSATIONS).map((c) =>
     ensureFocusOrgFields(c)
   );
-  return {
+  const fresh = {
     conversations,
     spells: structuredClone(SEED_SPELLS),
     activeId: null,
@@ -1443,6 +1488,8 @@ export function loadState() {
     spellView: "active",
     focusFolders: structuredClone(DEFAULT_FOCUS_FOLDERS),
   };
+  ensureScrollFocus(fresh);
+  return fresh;
 }
 
 /** Normalize Focus org QoL fields (pin, tags, folder, timestamps). */
