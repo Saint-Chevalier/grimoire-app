@@ -7,7 +7,6 @@
  */
 
 import {
-  ARCHETYPES,
   applyFocusClassification,
   DEFAULT_FOCUS_FOLDERS,
   ensureFocusOrgFields,
@@ -187,11 +186,8 @@ const els = {
   editDialog: $("#edit-convo-dialog"),
   editId: $("#edit-entity-id"),
   editName: $("#edit-entity-name"),
-  editType: $("#edit-entity-type"),
-  editArchetype: $("#edit-entity-archetype"),
-  editModel: $("#edit-entity-model"),
+  editTypeLabel: $("#edit-entity-type-label"),
   editModelLabel: $("#edit-model-label"),
-  editArchetypeLabel: $("#edit-archetype-label"),
   btnCancelEdit: $("#btn-cancel-edit"),
   btnEditFocus: $("#btn-edit-focus"),
   btnCopyScrollList: $("#btn-copy-scroll-list"),
@@ -734,20 +730,18 @@ function linkedNodeCount(convo) {
 }
 
 /**
- * Instant live filter: name, archetype, sealed node/channel, type, tags, keywords.
+ // Instant live filter: name, sealed node/channel, type, tags, keywords.
  */
 function focusMatchesSearch(convo, query) {
   const q = String(query || "").trim().toLowerCase();
   if (!q) return true;
   if (!convo) return false;
-  const arch = ARCHETYPES[convo.archetype] || {};
   const channel = getSealedChannel(convo);
   const type = getFocusType(convo);
   const tags = (convo.tags || []).join(" ");
   const hay = [
     convo.name,
-    convo.archetype,
-    arch.label,
+      arch.label,
     channel,
     type,
     convo.backend,
@@ -955,7 +949,7 @@ function buildFolderHeader(folder, count) {
 }
 
 function buildFocusRow(c, { folderId } = {}) {
-  const arch = ARCHETYPES[c.archetype] || ARCHETYPES.wizard;
+  /* archetype removed */
   const pending = pendingCount(c.id);
   const unread = unreadCount(c);
   const channel = getSealedChannel(c);
@@ -1354,6 +1348,13 @@ async function deleteFocus(focusId) {
 
   persist();
   renderAll();
+
+// Silent migration: strip archetype from existing conversations
+for (const c of state.conversations || []) {
+  if (c.archetype !== undefined) {
+    delete c.archetype;
+  }
+}
   toast(`Focus purged: ${label}`, "success");
 }
 
@@ -1439,8 +1440,8 @@ function renderChat() {
     return;
   }
 
-  const arch = ARCHETYPES[convo.archetype] || ARCHETYPES.wizard || { icon: "✧" };
-  els.entityIcon.textContent = arch.icon || "✧";
+  /* archetype removed */
+  els.entityIcon.textContent = "✧";
   els.entityName.textContent = convo.name;
   els.entityType.textContent = typeof typeLabel === "function" ? typeLabel(convo) : (convo.type || "—");
   if (els.sealedChannelValue) {
@@ -2798,8 +2799,7 @@ function applyUniverseViewMode() {
     els.universeViewFocusMeta.textContent = convo ? `${ch} · nucleus` : "select a Focus";
   }
   if (els.universeViewFocusIcon && convo) {
-    const arch = ARCHETYPES[convo.archetype];
-    els.universeViewFocusIcon.textContent = arch?.icon || "☉";
+    els.universeViewFocusIcon.textContent = "☉";
   }
   // System labels (frame held, receipt densen) only when chat is hidden
   updateUniverseSystemLabels(convo);
@@ -2878,7 +2878,7 @@ function handleLookAround() {
 
   const summary = [
     `### Look around — ${convo.name} · ${channel}`,
-    `Type: ${type} · Archetype: ${convo.archetype || "—"}`,
+    `Type: ${type}${convo.model && convo.model !== "Open" ? ` · ${convo.model}` : ""}`,
     `Born: ${created}`,
     ``,
     `**Recent intelligence**`,
@@ -3459,7 +3459,7 @@ function showNewFocusModal(opts = {}) {
 }
 
 /** Manual only: "+ New Focus" in sidebar. No mid-chat auto-discovery. */
-function openNewFocusModal({ name, archetype, type, model } = {}) {
+function openNewFocusModal({ name, type, model } = {}) {
   if (!els.dialog || !els.newName) {
     console.warn("New Focus dialog missing from DOM");
     return;
@@ -3467,14 +3467,7 @@ function openNewFocusModal({ name, archetype, type, model } = {}) {
 
   els.newName.value = name || "";
 
-  let t = type;
-  if (!t) {
-    if (archetype === "person") t = "person";
-    else if (archetype && ["wizard", "sage", "knight", "healer"].includes(archetype)) t = "ai";
-    else t = "person";
-  }
-  // Create UI is person | ai only
-  if (t !== "ai") t = "person";
+  const t = type || "person";
 
   if (els.newType) els.newType.value = t;
   if (els.newModel) {
@@ -4397,7 +4390,7 @@ function grimoireReplyAiNode(convo, userText, medium) {
  */
 function grimoireReplyPersonOrNetwork(convo, userText, medium) {
   const intent = hasSpellIntent(userText);
-  const arch = ARCHETYPES[convo.archetype]?.label || "focus target";
+  const archLabel = convo.type === "ai" ? "AI node" : convo.type === "network" ? "Network" : "Focus target";
 
   if (intent) {
     const spell = generateAndStoreSpell(convo, userText, { silentToast: true });
@@ -4410,7 +4403,7 @@ function grimoireReplyPersonOrNetwork(convo, userText, medium) {
 
   if (/\b(hello|hi|hey)\b/i.test(userText)) {
     return {
-      reply: `Focus is on **${convo.name}** (${arch} · ${medium}). Tell me what they should receive — say “draft a spell…” or hit **Cast Spell**.`,
+      reply: `Focus is on **${convo.name}** (${archLabel} · ${medium}). Tell me what they should receive — say “draft a spell…” or hit **Cast Spell**.`,
     };
   }
 
@@ -5719,12 +5712,10 @@ function openEditDialog() {
   els.editId.value = convo.id;
   els.editName.value = convo.name || "";
   els.editType.value = convo.type === "network" ? "network" : convo.type === "ai" ? "ai" : "person";
-  const arch = convo.archetype || (convo.type === "ai" ? "wizard" : convo.type === "network" ? "network" : "person");
-  els.editArchetype.value = arch;
   const raw = convo.model || convo.channel || "none";
   els.editModel.value = ["Hermes","Claude","ChatGPT","Grok","Local","Custom"].includes(raw) ? raw : "none";
   els.editModelLabel.hidden = els.editType.value !== "ai";
-  els.editArchetypeLabel.hidden = false;
+  nullLabel.hidden = false;
   els.editDialog?.showModal();
 }
 
@@ -5737,7 +5728,7 @@ function saveFocusEdit() {
     return;
   }
   const newType = els.editType.value === "ai" ? "ai" : els.editType.value === "network" ? "network" : "person";
-  const newArchetype = els.editArchetype.value;
+  const newArchetype = null.value;
   const newModel = newType === "ai" ? (els.editModel.value || "none") : "none";
   const newSealed = newType === "ai"
     ? (!newModel || newModel === "none" ? "Open" : newModel)
@@ -5755,7 +5746,7 @@ function saveFocusEdit() {
 
   convo.name = newName;
   convo.type = newType;
-  convo.archetype = newArchetype;
+  "person" = newArchetype;
   convo.model = newModel;
   if (newType !== "ai") convo.model = "none";
 

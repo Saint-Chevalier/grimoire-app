@@ -5,43 +5,12 @@
  * GBG: Grimoire Builds Grimoire — every turn can forge better spells.
  */
 
-export const ARCHETYPES = {
-  wizard:            { icon: "✧", label: "Wizard King", kind: "AI" },
-  sage:              { icon: "📜", label: "Sage",        kind: "AI" },
-  knight:            { icon: "⚔", label: "Knight",      kind: "AI" },
-  healer:            { icon: "✚", label: "Healer",      kind: "AI" },
-  dragon:            { icon: "🔥", label: "Dragon",      kind: "AI" },
-  painter:           { icon: "🎨", label: "Painter",     kind: "AI" },
-  saint_chevalier:   { icon: "🛡", label: "Saint Chevalier", kind: "AI" },
-  person:            { icon: "◎", label: "Person",      kind: "Person" },
-  network:           { icon: "⬡", label: "Network",     kind: "Network" },
-};
+/** Entity type classifier */
+export const FOCUS_TYPES = ["person", "place", "thing", "ai", "idea", "network"];
 
-/** Entity type classifier (what you're talking to) */
-export const FOCUS_TYPES = ["person", "ai", "network"];
-
-/** AI subtype → default spell archetype */
-export const AI_SUBTYPES = {
-  Hermes:  "wizard",
-  Claude:  "sage",
-  ChatGPT: "wizard",
-  Grok:    "knight",
-  Local:   "wizard",
-  Custom:  "wizard",
-};
-
-/** Person communication channels */
-export const PERSON_CHANNELS = ["Discord", "Text", "Email", "LinkedIn"];
-
-/** Network / broadcast platforms */
-export const NETWORK_PLATFORMS = ["LinkedIn", "X", "Discord Server"];
-
-/** @deprecated use PERSON_CHANNELS / AI_SUBTYPES / NETWORK_PLATFORMS */
+/** Communication mediums */
 export const MEDIUMS = ["Hermes", "Discord", "LinkedIn", "Text", "Email", "X", "Claude", "ChatGPT", "Grok", "Local", "Custom"];
 
-export const AI_ARCHETYPES = new Set(["wizard", "sage", "knight", "healer"]);
-
-export const ALIGNMENT_PURPOSE = "TRANSPARENCY & ALIGNMENT REVEAL";
 
 /**
  * Normalize legacy type values → person | ai | network
@@ -52,23 +21,11 @@ export function getFocusType(convo) {
   if (t === "eternal-intelligence") return "eternal-intelligence";
   if (t === "ai" || t === "ai-node") return "ai";
   if (t === "network" || t === "broadcast") return "network";
-  if (t === "person") return "person";
-  if (AI_ARCHETYPES.has(convo.archetype)) return "ai";
-  if (convo.archetype === "network") return "network";
+  if (t === "person" || t === "place" || t === "thing" || t === "idea") return t;
   return "person";
 }
 
-/**
- * Map type + optional AI subtype → archetype key
- */
-export function archetypeFromType(type, aiSubtype = "Hermes") {
-  if (type === "person") return "person";
-  if (type === "network") return "network";
-  if (type === "ai" || type === "ai-node") {
-    return AI_SUBTYPES[aiSubtype] || "wizard";
-  }
-  return "wizard";
-}
+// archetypeFromType removed; derive model/channel from type field directly
 
 /**
  * Resolve delivery medium from type classification
@@ -169,7 +126,6 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
     convo.aiSubtype = sealed === "Open" ? undefined : sealed;
     convo.backend = sealed;
     convo.medium = sealed;
-    convo.archetype = sealed === "Open" ? "wizard" : archetypeFromType("ai", sealed);
   } else if (convo.type === "network") {
     const sealed =
       backend || channel || convo.backend || convo.medium || "LinkedIn";
@@ -177,13 +133,11 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
     convo.aiSubtype = undefined;
     convo.backend = sealed;
     convo.medium = sealed;
-    convo.archetype = "network";
   } else {
     convo.model = undefined;
     convo.aiSubtype = undefined;
     convo.backend = "Open";
     convo.medium = "Open";
-    convo.archetype = "person";
   }
   return convo;
 }
@@ -236,7 +190,7 @@ export const SEED_CONVERSATIONS = [
   {
     id: "wizard-king-hermes",
     name: "Wizard King",
-    archetype: "wizard",
+
     medium: "Hermes",
     backend: "Hermes",
     type: "ai",
@@ -267,7 +221,7 @@ export const SEED_CONVERSATIONS = [
   {
     id: "wizard-king-grok",
     name: "Wizard King",
-    archetype: "wizard",
+
     medium: "Grok",
     backend: "Grok",
     type: "ai",
@@ -286,7 +240,7 @@ export const SEED_CONVERSATIONS = [
   {
     id: "sage-claude",
     name: "Sage",
-    archetype: "sage",
+
     medium: "Claude",
     backend: "Claude",
     type: "ai",
@@ -317,7 +271,7 @@ export const SEED_CONVERSATIONS = [
   {
     id: "knight-grok",
     name: "Knight",
-    archetype: "knight",
+
     medium: "Grok",
     backend: "Grok",
     type: "ai",
@@ -348,7 +302,7 @@ export const SEED_CONVERSATIONS = [
   {
     id: "healer-hermes",
     name: "Healer",
-    archetype: "healer",
+
     medium: "Hermes",
     backend: "Hermes",
     type: "ai",
@@ -410,7 +364,7 @@ export const SEED_CONVERSATIONS = [
     id: "linkedin-network",
     name: "LinkedIn Network",
     type: "network",
-    archetype: "network",
+    type: "network",
     medium: "LinkedIn",
     backend: "LinkedIn",
     star: { x: 68, y: 70 },
@@ -489,7 +443,7 @@ export const SEED_SPELLS = [
       "2. Hold Scroll ecosystem truths: 1 Focus = 1 world; human is the bus; identity → method → product.",
       "3. Run the DECAY CHECKLIST (skills, node dossiers, path case, untested gates, public/private wall, cron anchors, model matrix drift).",
       "4. Return with tables: PASS / FAIL / WATCH + one corrective spell per FAIL.",
-      "5. Do not write outside Healer lanes. Do not mutate other archetype stones.",
+      "5. Do not write outside safe lanes.",
       "",
       "Hold the watch. Report signal with evidence. End with Pulse: .",
       "",
@@ -615,7 +569,7 @@ export function formatSpellMarkdown(spell) {
 export function craftSpellIntelligence(conversation, medium, context = "") {
   const type = getFocusType(conversation);
   const backend = medium || getSealedChannel(conversation);
-  const arch = conversation.archetype || "wizard";
+  const arch = "person";
   const notes = (conversation.alignmentNotes || "").slice(0, 400);
   const ctx = (context || "").toLowerCase();
 
@@ -663,7 +617,7 @@ export function craftSpellIntelligence(conversation, medium, context = "") {
       },
     };
     const pack = frames[backend] || {
-      crafted: `Crafted for ${backend} — archetype-aware AI framing (${arch})`,
+      crafted: `Crafted for ${backend} — type-aware AI framing (${arch})`,
       framing: "State purpose, constraints, and desired output format.",
       constraints: "Stay within declared tools and refusal classes.",
     };
@@ -755,8 +709,7 @@ function makeSpellId(conversationId) {
  */
 export function generateAlignmentSpell(conversation, medium) {
   const target = conversation.name;
-  const arch = conversation.archetype;
-  const archLabel = ARCHETYPES[arch]?.label || "Node";
+  const archLabel = "Node";
   // Sealed channel only — never multiplex backends
   const med =
     medium ||
@@ -980,7 +933,7 @@ export function engineerSpellFromAlignment(conversation, medium, userHint, profi
   const med = medium || getSealedChannel(conversation);
   const p = profile || conversation.alignmentProfile || parseAlignmentIntelligence(conversation.alignmentNotes || "");
   const intent = (userHint || "").trim();
-  const purpose = derivePurpose(intent, conversation.archetype, target);
+  const purpose = derivePurpose(intent, target);
 
   const body = [
     `${target} —`,
@@ -1050,8 +1003,7 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
   const focusType = getFocusType(conversation);
   // Derive archetype from type classifier (not raw medium string)
   const arch =
-    conversation.archetype ||
-    archetypeFromType(focusType, conversation.aiSubtype || medium);
+    "";
   // Sealed channel only — focus.backend / focus.medium, no multiplexing
   const med =
     medium ||
@@ -1226,7 +1178,7 @@ function deriveEssence(context, arch, medium, aligned) {
     ? context.replace(/\s+/g, " ").trim()
     : `${arch} transmission via ${medium}.`;
   const one = base.length > 120 ? base.slice(0, 117) + "…" : base;
-  if (aligned && AI_ARCHETYPES.has(arch)) {
+  if (aligned) {
     return `Alignment-aware · ${one}`;
   }
   return one;
@@ -1243,7 +1195,7 @@ function deriveMessage({
   alignmentNotes,
   alignment,
 }) {
-  const t = focusType || (arch === "network" ? "network" : AI_ARCHETYPES.has(arch) ? "ai" : "person");
+  const t = focusType || "person";
 
   // ── Person: natural & warm ──
   if (t === "person") {
@@ -1255,8 +1207,8 @@ function deriveMessage({
     return networkMessage(purpose, context);
   }
 
-  // ── AI node: formal, structured, archetype-aware ──
-  if (t === "ai" || AI_ARCHETYPES.has(arch)) {
+  // ── AI node: formal, structured, type-aware ──
+  if (t === "ai") {
     return aiNodeMessage({
       target,
       arch: arch || "wizard",
@@ -1403,7 +1355,7 @@ export const STORAGE_KEY = "grimoire-mvp-v1";
 /** Default organize folders for Focus QoL (search / groups / pin). */
 export const DEFAULT_FOCUS_FOLDERS = [
   { id: "folder-wizard-king", name: "Wizard King", collapsed: false, order: 0 },
-  { id: "folder-archetypes", name: "Archetypes", collapsed: false, order: 1 },
+  { id: "folder-ideas", name: "Ideas", collapsed: false, order: 1 },
   { id: "folder-nodes", name: "Nodes", collapsed: false, order: 2 },
 ];
 
@@ -1415,7 +1367,7 @@ export function suggestFocusFolderId(convo) {
   if (name.includes("wizard king")) return "folder-wizard-king";
   if (t === "network") return "folder-nodes";
   if (t === "ai" && /^(healer|knight|sage|wizard)$/i.test(name)) {
-    return "folder-archetypes";
+    return "folder-ideas";
   }
   if (t === "ai") return "folder-nodes";
   return null;
@@ -1502,8 +1454,7 @@ function migrateState(state) {
     if (t === "ai") {
       if (!c.aiSubtype && !c.backend) {
         if (AI_SUBTYPES[c.medium]) c.aiSubtype = c.medium;
-        else if (c.archetype === "sage") c.aiSubtype = "Claude";
-        else if (c.archetype === "knight") c.aiSubtype = "Grok";
+        // migration to model/subtype handled in classification
         else c.aiSubtype = "Hermes";
       }
       applyFocusClassification(c, {
@@ -1872,7 +1823,7 @@ export function classifySpellDisplay(spell, convo) {
     return SPELL_KIND_DISPLAY.alignment;
   }
 
-  const arch = String(convo?.archetype || "").toLowerCase();
+  const arch = "";
   const focusType = convo ? getFocusType(convo) : "ai";
   const body = corpusOfSpell(spell);
   const explicit = String(spell.kind || "").toLowerCase().trim();
