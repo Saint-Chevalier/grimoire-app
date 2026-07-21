@@ -783,18 +783,28 @@ function sortFocusesForDisplay(list) {
 }
 
 function renderConvoList() {
-  if (!els.convoList) return;
-  els.convoList.innerHTML = "";
+  console.debug("[sidebar] render start", {
+    convoList: !!els.convoList,
+    conversations: (state.conversations || []).length,
+    activeId: state.activeId,
+    query: state.focusSearchQuery,
+  });
+  if (!els.convoList) {
+    console.warn("[sidebar] els.convoList missing");
+    return;
+  }
+  try { els.convoList.innerHTML = ""; } catch (e) { console.warn("[sidebar] innerHTML clear failed", e); }
 
   const query = state.focusSearchQuery || "";
   const all = state.conversations || [];
   const matched = all.filter((c) => focusMatchesSearch(c, query));
+  console.debug("[sidebar] matched", matched.map((c) => c.id + "::" + c.name));
+  const searching = Boolean(String(query).trim());
 
-  // Search result count
   if (els.focusSearchCount) {
-    if (String(query).trim()) {
+    if (searching) {
       els.focusSearchCount.hidden = false;
-      els.focusSearchCount.textContent = `${matched.length}/${all.length}`;
+      els.focusSearchCount.textContent = matched.length + "/" + all.length;
     } else {
       els.focusSearchCount.hidden = true;
       els.focusSearchCount.textContent = "";
@@ -804,27 +814,27 @@ function renderConvoList() {
   if (!matched.length) {
     const empty = document.createElement("div");
     empty.className = "focus-list-empty";
-    empty.textContent = String(query).trim() ? "No focuses match" : "No focuses yet";
+    empty.textContent = searching ? "No focuses match" : "No focuses yet";
     els.convoList.appendChild(empty);
+    console.debug("[sidebar] empty state rendered");
     return;
   }
 
-  // Pinned first, then flat operator drag order
   const pinned = matched.filter((c) => c.pinned);
   const unpinned = matched.filter((c) => !c.pinned);
   if (pinned.length && !String(query).trim()) {
     const pinHeader = document.createElement("div");
     pinHeader.className = "focus-group-header focus-group-pinned";
-    pinHeader.innerHTML = `<span class="focus-group-name">★ Pinned</span><span class="focus-group-count">${pinned.length}</span>`;
+    pinHeader.innerHTML = '<span class="focus-group-name">★ Pinned</span><span class="focus-group-count">' + pinned.length + "</span>";
     els.convoList.appendChild(pinHeader);
-    for (const c of pinned) {
-      els.convoList.appendChild(buildFocusRow(c));
-    }
+    for (const c of pinned) els.convoList.appendChild(buildFocusRow(c));
   }
-  const flat = sortFocusesForDisplay(matched);
+  const flat = sortFocusesForDisplay(unpinned.length ? unpinned : matched);
+  console.debug("[sidebar] appending rows", flat.map((c) => c.id + "::" + c.name));
   for (const c of flat) {
-    els.convoList.appendChild(buildFocusRow(c));
+    try { els.convoList.appendChild(buildFocusRow(c)); } catch (e) { console.warn("[sidebar] row append failed", c.id, e); }
   }
+  console.debug("[sidebar] render end", { rows: flat.length });
 }
 
 
