@@ -6,6 +6,19 @@
  * Cast Spell still works; Grimoire also initiates without waiting.
  */
 
+window.__GrimoireErrors = [];
+window.__grimoireOriginalError = window.onerror;
+window.onerror = function(message, url, line, col, error) {
+  window.__GrimoireErrors.push({ message, url, line, col, stack: error && error.stack ? error.stack : null });
+  if (console && console.error) console.error("[grimoire-global] " + message, { url, line, col, stack: error && error.stack });
+  if (window.__grimoireOriginalError) return window.__grimoireOriginalError(message, url, line, col, error);
+  return true;
+};
+window.addEventListener("unhandledrejection", function(ev) {
+  var reason = ev.reason;
+  window.__GrimoireErrors.push({ unhandledRejection: reason, stack: reason && reason.stack });
+  if (console && console.error) console.error("[grimoire-global] unhandledrejection", reason);
+});
 import {
   applyFocusClassification,
   DEFAULT_FOCUS_FOLDERS,
@@ -2270,7 +2283,7 @@ function spellTypeForFocus(convo, spell) {
   return "ai";
 }
 
-function renderAll() {
+function renderAll() { try {
   // Heal lifecycle BEFORE any badge math (sidebar was counting pre-heal zombies)
   if (healSpellLifecycles()) persist();
 
@@ -5938,6 +5951,18 @@ renderAll();
 }
 
 // Self-init intelligence vault (creates GRIMOIRE-FocusIntelligence/)
+/* catch-wrapper for renderAll */
+(function() {
+  var _orig = renderAll;
+  renderAll = function() {
+    try { _orig.call(this); }
+    catch (err) {
+      console.error('[renderAll] caught', err);
+      if (window.__GrimoireErrors) window.__GrimoireErrors.push({ from: 'renderAll', message: err.message, stack: err.stack });
+    }
+  };
+})();
+
 bootstrapIntelligenceVault().finally(() => {
   if (activeConvo()) els.chatInput?.focus();
 });
