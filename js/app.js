@@ -741,7 +741,6 @@ function focusMatchesSearch(convo, query) {
   const tags = (convo.tags || []).join(" ");
   const hay = [
     convo.name,
-      arch.label,
     channel,
     type,
     convo.backend,
@@ -790,11 +789,10 @@ function renderConvoList() {
   const query = state.focusSearchQuery || "";
   const all = state.conversations || [];
   const matched = all.filter((c) => focusMatchesSearch(c, query));
-  const searching = Boolean(String(query).trim());
 
   // Search result count
   if (els.focusSearchCount) {
-    if (searching) {
+    if (String(query).trim()) {
       els.focusSearchCount.hidden = false;
       els.focusSearchCount.textContent = `${matched.length}/${all.length}`;
     } else {
@@ -806,19 +804,15 @@ function renderConvoList() {
   if (!matched.length) {
     const empty = document.createElement("div");
     empty.className = "focus-list-empty";
-    empty.textContent = searching ? "No focuses match" : "No focuses yet";
+    empty.textContent = String(query).trim() ? "No focuses match" : "No focuses yet";
     els.convoList.appendChild(empty);
     return;
   }
 
-  const folders = getSortedFocusFolders();
-  const folderIds = new Set(folders.map((f) => f.id));
-
-  // Pinned strip (always first when not searching by folder collapse rules)
-  const pinned = sortFocusesForDisplay(matched.filter((c) => c.pinned));
+  // Pinned first, then flat operator drag order
+  const pinned = matched.filter((c) => c.pinned);
   const unpinned = matched.filter((c) => !c.pinned);
-
-  if (pinned.length && !searching) {
+  if (pinned.length && !String(query).trim()) {
     const pinHeader = document.createElement("div");
     pinHeader.className = "focus-group-header focus-group-pinned";
     pinHeader.innerHTML = `<span class="focus-group-name">★ Pinned</span><span class="focus-group-count">${pinned.length}</span>`;
@@ -827,128 +821,15 @@ function renderConvoList() {
       els.convoList.appendChild(buildFocusRow(c));
     }
   }
-
-  if (searching) {
-    // Flat filtered results (include pinned in list once)
-    const flat = sortFocusesForDisplay(matched);
-    for (const c of flat) {
-      els.convoList.appendChild(buildFocusRow(c));
-    }
-    return;
-  }
-
-  // Group unpinned by folder
-  const byFolder = new Map();
-  const ungrouped = [];
-  for (const c of unpinned) {
-    const fid = c.folderId && folderIds.has(c.folderId) ? c.folderId : null;
-    if (!fid) {
-      ungrouped.push(c);
-      continue;
-    }
-    if (!byFolder.has(fid)) byFolder.set(fid, []);
-    byFolder.get(fid).push(c);
-  }
-
-  for (const folder of folders) {
-    const items = sortFocusesForDisplay(byFolder.get(folder.id) || []);
-    // Always show folder headers so DnD targets + empty groups remain usable
-    els.convoList.appendChild(buildFolderHeader(folder, items.length));
-    if (folder.collapsed) continue;
-    if (!items.length) {
-      const dropZone = document.createElement("div");
-      dropZone.className = "focus-folder-empty";
-      dropZone.dataset.folderId = folder.id;
-      dropZone.textContent = "Drop focuses here";
-      wireFolderDropTarget(dropZone, folder.id);
-      els.convoList.appendChild(dropZone);
-      continue;
-    }
-    for (const c of items) {
-      els.convoList.appendChild(buildFocusRow(c, { folderId: folder.id }));
-    }
-  }
-
-  // Ungrouped
-  const free = sortFocusesForDisplay(ungrouped);
-  if (free.length || folders.length) {
-    const freeHeader = document.createElement("div");
-    freeHeader.className = "focus-group-header focus-group-free";
-    freeHeader.dataset.folderId = "";
-    freeHeader.innerHTML = `<span class="focus-group-name">Ungrouped</span><span class="focus-group-count">${free.length}</span>`;
-    wireFolderDropTarget(freeHeader, null);
-    els.convoList.appendChild(freeHeader);
-  }
-  for (const c of free) {
-    els.convoList.appendChild(buildFocusRow(c, { folderId: null }));
+  const flat = sortFocusesForDisplay(matched);
+  for (const c of flat) {
+    els.convoList.appendChild(buildFocusRow(c));
   }
 }
 
-function buildFolderHeader(folder, count) {
-  const header = document.createElement("div");
-  header.className = "focus-group-header" + (folder.collapsed ? " collapsed" : "");
-  header.dataset.folderId = folder.id;
-  header.setAttribute("role", "button");
-  header.tabIndex = 0;
-  header.title = "Click to expand/collapse · Drop focuses to group";
 
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "focus-group-toggle";
-  toggle.setAttribute("aria-expanded", folder.collapsed ? "false" : "true");
-  toggle.textContent = folder.collapsed ? "▸" : "▾";
-  toggle.title = folder.collapsed ? "Expand group" : "Collapse group";
-  toggle.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleFolderCollapsed(folder.id);
-  });
 
-  const name = document.createElement("span");
-  name.className = "focus-group-name";
-  name.textContent = folder.name;
-
-  const countEl = document.createElement("span");
-  countEl.className = "focus-group-count";
-  countEl.textContent = String(count);
-
-  const ren = document.createElement("button");
-  ren.type = "button";
-  ren.className = "focus-group-action";
-  ren.title = "Rename group";
-  ren.textContent = "✎";
-  ren.addEventListener("click", (e) => {
-    e.stopPropagation();
-    renameFocusFolder(folder.id);
-  });
-
-  const del = document.createElement("button");
-  del.type = "button";
-  del.className = "focus-group-action danger";
-  del.title = "Delete group (focuses become ungrouped)";
-  del.textContent = "✕";
-  del.addEventListener("click", (e) => {
-    e.stopPropagation();
-    deleteFocusFolder(folder.id);
-  });
-
-  header.appendChild(toggle);
-  header.appendChild(name);
-  header.appendChild(countEl);
-  header.appendChild(ren);
-  header.appendChild(del);
-
-  header.addEventListener("click", () => toggleFolderCollapsed(folder.id));
-  header.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      toggleFolderCollapsed(folder.id);
-    }
-  });
-  wireFolderDropTarget(header, folder.id);
-  return header;
-}
-
-function buildFocusRow(c, { folderId } = {}) {
+function buildFocusRow(c) {
   /* archetype removed */
   const pending = pendingCount(c.id);
   const unread = unreadCount(c);
@@ -975,7 +856,6 @@ function buildFocusRow(c, { folderId } = {}) {
   row.setAttribute("role", "listitem");
   row.dataset.focusId = c.id;
   row.draggable = true;
-  if (folderId !== undefined) row.dataset.folderId = folderId == null ? "" : folderId;
 
   const btn = document.createElement("button");
   btn.type = "button";
@@ -1004,7 +884,7 @@ function buildFocusRow(c, { folderId } = {}) {
     : "";
 
   btn.innerHTML = `
-    <span class="convo-icon" aria-hidden="true">${arch.icon}</span>
+    <span class="convo-icon" aria-hidden="true">✧</span>
     <span class="convo-text">
       <span class="convo-name-row">
         ${c.pinned ? `<span class="convo-pin-mark" title="Pinned" aria-hidden="true">★</span>` : ""}
@@ -1253,24 +1133,7 @@ function wireFocusDrag(row, focus) {
   });
 }
 
-function wireFolderDropTarget(el, folderId) {
-  el.addEventListener("dragover", (e) => {
-    if (!_dragFocusId) return;
-    e.preventDefault();
-    el.classList.add("drag-over");
-  });
-  el.addEventListener("dragleave", () => {
-    el.classList.remove("drag-over");
-  });
-  el.addEventListener("drop", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    el.classList.remove("drag-over");
-    const id = _dragFocusId || e.dataTransfer?.getData("text/plain");
-    if (!id) return;
-    moveFocusToFolder(id, folderId);
-  });
-}
+
 
 /** One-click export of Focus intelligence dossier as markdown download. */
 function exportFocusDossier(focusId) {
@@ -1464,7 +1327,7 @@ function renderChat() {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `
-      <div class="empty-glyph">${arch.icon || "✧"}</div>
+      <div class="empty-glyph">✧</div>
       <p>Focus on <strong>${escapeHtml(convo.name)}</strong> is open.</p>
       <p class="empty-hint">${
         isAiNode(convo)
