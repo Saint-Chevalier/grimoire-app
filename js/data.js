@@ -1006,6 +1006,20 @@ export function normalizeSpell(spell) {
     spell.castTimestamp = spell.sentAt || spell.answeredAt || null;
   }
 
+  // Lifecycle meta for face / detail
+  if (spell.lastCast == null) {
+    spell.lastCast = spell.castTimestamp || spell.sentAt || spell.answeredAt || null;
+  }
+  let castCount = Number(spell.castCount);
+  if (!Number.isFinite(castCount) || castCount < 0) {
+    // Infer from stamps if never tracked
+    castCount =
+      spell.lastCast || spell.sentAt || spell.answeredAt || spell.selfCastAt ? 1 : 0;
+  }
+  spell.castCount = Math.floor(castCount);
+  if (spell.refinementNote == null) spell.refinementNote = "";
+  if (!Array.isArray(spell.glyphs)) spell.glyphs = [];
+
   return spell;
 }
 
@@ -1098,6 +1112,7 @@ export function refineSpellVersion(spell, { content, title, subtitle, note } = {
   const nextContent = content != null ? String(content) : String(spell.content || spell.message || "");
   const nextTitle = title != null ? String(title).trim() : spell.title;
   const nextSub = subtitle != null ? String(subtitle).trim() : spell.subtitle;
+  const noteText = String(note || `refined v${(Number(spell.iteration) || 1) + 1}`).trim();
   spell.iteration = (Number(spell.iteration) || 1) + 1;
   spell.version = spell.iteration;
   spell.content = nextContent;
@@ -1110,13 +1125,14 @@ export function refineSpellVersion(spell, { content, title, subtitle, note } = {
     spell.subtitle = nextSub;
     spell.essence = nextSub;
   }
+  spell.refinementNote = noteText.slice(0, 240);
   spell.versions = Array.isArray(spell.versions) ? spell.versions : [];
   spell.versions.push({
     version: spell.iteration,
     content: nextContent,
     title: spell.title,
     createdAt: Date.now(),
-    note: note || `refined v${spell.iteration}`,
+    note: noteText,
   });
   // Refined spell returns to active/ready queue
   spell.status = "ready";

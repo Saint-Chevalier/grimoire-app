@@ -772,6 +772,198 @@ export function seedCell2DoctrineEntries() {
   ];
 }
 
+// ── Glyphs — teachable units of actionable intelligence ──
+const GLYPH_DIR = "grimoire-local";
+const GLYPH_SUB = "glyphs";
+
+export function slugifyGlyph(text) {
+  return (
+    String(text || "glyph")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "glyph"
+  );
+}
+
+export function synthesizeGlyphTitle(body) {
+  const t = String(body || "").trim();
+  if (!t) return "Untitled glyph";
+  // "Glyph: foo" or first line
+  const m = t.match(/^glyph\s*[:\-—]\s*(.+)$/im);
+  const line = (m ? m[1] : t.split(/\n/)[0] || t).trim();
+  return line.slice(0, 80) || "Untitled glyph";
+}
+
+function formatGlyphMarkdown(glyph) {
+  const tags = Array.isArray(glyph.tags) ? glyph.tags.join(", ") : String(glyph.tags || "");
+  return [
+    `---`,
+    `id: ${glyph.id}`,
+    `title: ${String(glyph.title || "").replace(/\n/g, " ")}`,
+    `spellId: ${glyph.spellId || ""}`,
+    `target: ${glyph.target || ""}`,
+    `scope: ${glyph.scope || "spell"}`,
+    `focusId: ${glyph.focusId || ""}`,
+    `createdAt: ${glyph.createdAt || new Date().toISOString()}`,
+    `tags: [${tags}]`,
+    `---`,
+    ``,
+    String(glyph.body || "").trim(),
+    ``,
+  ].join("\n");
+}
+
+/**
+ * Ensure grimoire-local/glyphs/ under the focus vault root.
+ */
+async function ensureGlyphsDirectory(focusId) {
+  const root = await getVaultRoot(focusId);
+  if (!root) return null;
+  try {
+    const local = await root.getDirectoryHandle(GLYPH_DIR, { create: true });
+    const glyphs = await local.getDirectoryHandle(GLYPH_SUB, { create: true });
+    return glyphs;
+  } catch (err) {
+    console.warn("ensureGlyphsDirectory", err);
+    return null;
+  }
+}
+
+/**
+ * Write a glyph for a spell into the focus vault + memory.
+ * Path: grimoire-local/glyphs/<spellId>-<slug>.md
+ */
+export async function writeSpellGlyph(focus, spell, { body, title, scope = "spell", tags = [] } = {}) {
+  const text = String(body || "").replace(/^glyph\s*[:\-—]\s*/i, "").trim();
+  if (!text) return { ok: false, reason: "empty" };
+  const focusId = focus?.id || spell?.conversationId || null;
+  const spellId = spell?.id || "global";
+  const glyphTitle = String(title || synthesizeGlyphTitle(text)).trim().slice(0, 80);
+  const slug = slugifyGlyph(glyphTitle);
+  const id = `glyph-${Date.now().toString(36)}-${slug.slice(0, 12)}`;
+  const fileName = `${String(spellId).replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 40)}-${slug}.md`;
+  const relPath = `${GLYPH_DIR}/${GLYPH_SUB}/${fileName}`;
+  const glyph = {
+    id,
+    title: glyphTitle,
+    body: text,
+    spellId,
+    target: spell?.target || focus?.name || "",
+    scope: scope || "spell",
+    focusId: focusId || "",
+    createdAt: new Date().toISOString(),
+    tags: Array.isArray(tags) && tags.length ? tags : ["glyph", spell?.kind || "spell"].filter(Boolean),
+    path: relPath,
+    fileName,
+  };
+
+  // Memory on spell + focus
+  if (spell) {
+    if (!Array.isArray(spell.glyphs)) spell.glyphs = [];
+    spell.glyphs.push({
+      id: glyph.id,
+      title: glyph.title,
+      body: glyph.body,
+      path: glyph.path,
+      createdAt: glyph.createdAt,
+      scope: glyph.scope,
+    });
+  }
+  if (focus) {
+    if (!Array.isArray(focus.glyphs)) focus.glyphs = [];
+    focus.glyphs.push({
+      id: glyph.id,
+      title: glyph.title,
+      body: glyph.body,
+      path: glyph.path,
+      spellId: glyph.spellId,
+      target: glyph.target,
+      createdAt: glyph.createdAt,
+    });
+  }
+
+  // Disk
+  let method = "memory";
+  try {
+    const dir = await ensureGlyphsDirectory(focusId);
+    if (dir) {
+      const fh = await dir.getFileHandle(fileName, { create: true });
+      const w = await fh.createWritable();
+      await w.write(formatGlyphMarkdown(glyph));
+      await w.close();
+      method = "filesystem";
+    }
+  } catch (err) {
+    console.warn("writeSpellGlyph disk", err);
+  }
+
+  // Also densen into entity intelligence noodle
+  try {
+    if (focus) {
+      await appendEntityIntelligence(focus, {
+        body: `**Glyph forged:** ${glyph.title}\n\n${glyph.body}\n\n_Linked spell: ${spell?.title || spell?.purpose || spellId}_`,
+        source: "user",
+        category: "doctrine",
+        certainty: "confirmed",
+        tags: ["glyph", "teach", glyph.scope],
+      });
+    }
+  } catch (err) {
+    console.warn("writeSpellGlyph intel", err);
+  }
+
+  return { ok: true, glyph, method, path: relPath };
+}
+
+/**
+ * Glyphs that apply to a spell (linked on spell + matching target/kind on focus).
+ */
+export function glyphsForSpell(focus, spell) {
+  const out = [];
+  const seen = new Set();
+  const add = (g) => {
+    if (!g || !g.id || seen.has(g.id)) return;
+    seen.add(g.id);
+    out.push(g);
+  };
+  for (const g of spell?.glyphs || []) add(g);
+  const target = String(spell?.target || "").toLowerCase();
+  const kind = String(spell?.kind || "").toLowerCase();
+  for (const g of focus?.glyphs || []) {
+    if (g.spellId && g.spellId === spell?.id) add(g);
+    else if (
+      target &&
+      String(g.target || "").toLowerCase() === target
+    ) {
+      add(g);
+    } else if (g.scope === "focus" || g.scope === "global") {
+      add(g);
+    } else if (kind && String(g.tags || []).join(" ").toLowerCase().includes(kind)) {
+      add(g);
+    }
+  }
+  return out;
+}
+
+/** Merge applicable glyphs into spell content for refine/craft. */
+export function mergeGlyphsIntoSpellContent(content, glyphs = []) {
+  const base = String(content || "").trim();
+  const list = Array.isArray(glyphs) ? glyphs.filter((g) => g && (g.body || g.title)) : [];
+  if (!list.length) return base;
+  const block = list
+    .map((g, i) => `${i + 1}. **${g.title || "Glyph"}** — ${String(g.body || "").trim()}`)
+    .join("\n");
+  // Avoid double-append if already present
+  if (/##\s*Operator glyphs/i.test(base)) {
+    return base.replace(
+      /##\s*Operator glyphs[\s\S]*$/i,
+      `## Operator glyphs (teachings)\n${block}\n`
+    );
+  }
+  return `${base}\n\n## Operator glyphs (teachings)\n${block}\n`;
+}
+
 /**
  * Resolve vault root for writes.
  * Prefer per-focus handle when focusId provided; fall back to legacy global.

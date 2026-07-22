@@ -66,13 +66,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=await-paste-1";
+} from "./data.js?v=glyph-actions-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=await-paste-1";
+} from "./stars.js?v=glyph-actions-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -80,7 +80,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=await-paste-1";
+} from "./universe.js?v=glyph-actions-1";
 import {
   chooseIntelligenceFolder,
   chooseFocusIntelligenceFolder,
@@ -108,6 +108,10 @@ import {
   vaultEntrySourceCount,
   calculateNodeContributions,
   getKnownBackendProfile,
+  writeSpellGlyph,
+  glyphsForSpell,
+  mergeGlyphsIntoSpellContent,
+  synthesizeGlyphTitle,
   saveEntityImage,
   classifyCell2Kind,
   entityIntelPath,
@@ -124,12 +128,12 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=await-paste-1";
+} from "./intelligence.js?v=glyph-actions-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=await-paste-1";
+} from "./health.js?v=glyph-actions-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -923,17 +927,84 @@ function updateSpellDetailCopyButton() {
   if (!btn) return;
   const id = spellDetailContext?.spellId;
   const spell = id ? state.spells.find((s) => s.id === id) : null;
+  const st = String(spell?.status || "").toLowerCase();
+  const isHist =
+    spell &&
+    (spellIsSealed(spell) || st === "history" || st === "sent" || st === "archived");
   if (spell?.awaitingReply) {
     btn.textContent = "Awaiting reply…";
     btn.classList.add("awaiting-reply");
     btn.disabled = false;
     btn.title = "Paste the AI reply into chat to seal this cast · click again to cancel await";
+  } else if (isHist) {
+    btn.textContent = "Cast again";
+    btn.classList.remove("awaiting-reply");
+    btn.disabled = false;
+    btn.title = "Re-copy spell and await paste reply";
   } else {
-    btn.textContent = "Copy spell";
+    btn.textContent = "Cast spell";
     btn.classList.remove("awaiting-reply");
     btn.disabled = false;
     btn.title = "Copy spell to clipboard and wait for paste-reply in chat";
   }
+}
+
+/** Teach glyph from user words → vault + spell.glyphs */
+async function teachSpellGlyph(spell, focus, body, { scope = "spell" } = {}) {
+  if (!spell || !body) return null;
+  normalizeSpell(spell);
+  const title = synthesizeGlyphTitle(body);
+  const result = await writeSpellGlyph(focus, spell, {
+    body,
+    title,
+    scope,
+    tags: ["glyph", spell.kind || "spell", scope].filter(Boolean),
+  });
+  if (!result?.ok) {
+    toast("Could not forge glyph", "");
+    return null;
+  }
+  // Refinement credit without full content rewrite
+  spell.refinementNote = `Glyph: ${result.glyph.title}`.slice(0, 240);
+  spell.updatedAt = Date.now();
+  persist();
+  if (focus?.id) invalidateContribCache(focus.id);
+  toast(`Glyph forged: ${result.glyph.title}`, "success");
+  activityPing(`✦ Glyph · ${result.glyph.title}`);
+  return result.glyph;
+}
+
+/**
+ * Refine spell: optional user lesson + merge applicable glyphs → vN+1.
+ */
+async function refineSpellWithGlyphs(spell, focus) {
+  if (!spell) return;
+  normalizeSpell(spell);
+  const lesson = window.prompt(
+    "What worked / didn't work? (optional — leave blank to only merge glyphs)",
+    spell.refinementNote || ""
+  );
+  if (lesson === null) return; // cancelled
+
+  const glyphs = glyphsForSpell(focus, spell);
+  let content = String(spell.content || spell.message || "");
+  if (String(lesson || "").trim()) {
+    content =
+      content.trim() +
+      `\n\n## Refinement note\n${String(lesson).trim()}\n`;
+  }
+  content = mergeGlyphsIntoSpellContent(content, glyphs);
+  const note = String(lesson || "").trim()
+    ? String(lesson).trim().slice(0, 200)
+    : glyphs.length
+      ? `Merged ${glyphs.length} glyph${glyphs.length === 1 ? "" : "s"}`
+      : "Refined content";
+
+  refineSpellVersion(spell, { content, note });
+  persist();
+  toast(`Refined → v${spell.iteration}`, "success");
+  void openSpellDetailModal(spell, { convo: focus });
+  void renderSpells();
 }
 
 /**
@@ -2691,6 +2762,12 @@ function spellCardFaceHtml(spell, convo, { contrib = null } = {}) {
       ? { rows: spell.nodeContribution.rows, empty: spell.nodeContribution.empty }
       : null);
 
+  const castCount = Number(spell.castCount) || 0;
+  const lastCast = spell.lastCast || spell.castTimestamp || spell.sentAt || null;
+  const lastCastLabel = lastCast ? formatSpellTime(lastCast) : "";
+  const refineNote = String(spell.refinementNote || "").trim();
+  const glyphN = Array.isArray(spell.glyphs) ? spell.glyphs.length : 0;
+
   return `
     <div class="spell-face">
       <div class="spell-face-top">
@@ -2708,6 +2785,36 @@ function spellCardFaceHtml(spell, convo, { contrib = null } = {}) {
           String(spell.status || "ready").toLowerCase()
         )}">${escapeHtml(status)}</span>
       </div>
+      <div class="spell-face-lifecycle">
+        ${
+          castCount > 0
+            ? `<span class="spell-face-cast-count" title="Cast count">${castCount} cast${
+                castCount === 1 ? "" : "s"
+              }</span>`
+            : ""
+        }
+        ${
+          lastCastLabel
+            ? `<span class="spell-face-last-cast" title="Last cast">Last: ${escapeHtml(
+                lastCastLabel
+              )}</span>`
+            : ""
+        }
+        ${
+          glyphN > 0
+            ? `<span class="spell-face-glyph-count" title="Linked glyphs">${glyphN} glyph${
+                glyphN === 1 ? "" : "s"
+              }</span>`
+            : ""
+        }
+      </div>
+      ${
+        refineNote
+          ? `<p class="spell-face-refine-note" title="Refinement note">${escapeHtml(
+              refineNote
+            )}</p>`
+          : ""
+      }
       ${tagsHtml ? `<div class="spell-face-tags">${tagsHtml}</div>` : ""}
       ${contribMiniHtml(breakdown, { compact: true })}
     </div>`;
@@ -2900,14 +3007,44 @@ async function openSpellDetailModal(spell, { sealOnCopy = true, convo = null } =
     /* ignore */
   }
 
-  const nodeChannel = scrollNode?.poe || channel;
-  const nodePurpose = scrollNode?.purpose || backend?.format || "—";
-  const nodeQuirks = backend?.quirks || scrollNode?.notes || "—";
-  const nodeFormat = backend?.format || "—";
-  const nodeAvoids = backend?.avoids || "—";
+  const nodeChannel = scrollNode?.poe || channel || "";
+  const nodePurpose = scrollNode?.purpose || "";
+  const nodeQuirks = backend?.quirks || scrollNode?.notes || "";
+  const nodeFormat = backend?.format || "";
+  const nodeAvoids = backend?.avoids || "";
   const intelPath =
     scrollNode?.intel_file_path ||
     entityIntelPath(focus ? entityIdFromFocus(focus) : target);
+  const castCount = Number(spell.castCount) || 0;
+  const lastCast = spell.lastCast || spell.castTimestamp || spell.sentAt || null;
+  const refineNote = String(spell.refinementNote || "").trim();
+  const linkedGlyphs = glyphsForSpell(focus, spell);
+
+  const kvRow = (label, value, { long = false } = {}) => {
+    const v = String(value ?? "").trim();
+    if (!v || v === "—" || v === "-" || v === "null" || v === "undefined") return "";
+    const style = long
+      ? ` style="text-align:left;max-width:58%"`
+      : label === "Intel path"
+        ? ` style="font-size:0.62rem;word-break:break-all"`
+        : "";
+    return `<div><span class="k">${escapeHtml(label)}</span><span class="v"${style}>${escapeHtml(
+      long ? v.slice(0, 160) : v
+    )}</span></div>`;
+  };
+
+  const dispatchRows = [
+    kvRow("Name", target),
+    kvRow("Channel", nodeChannel),
+    kvRow("Model / medium", backend?.name || nodeChannel),
+    kvRow("Intel path", intelPath),
+    kvRow("Output Style", nodeFormat, { long: true }),
+    kvRow("Quirks", nodeQuirks, { long: true }),
+    kvRow("Anti-patterns", nodeAvoids, { long: true }),
+    kvRow("Treaty", nodePurpose, { long: true }),
+  ]
+    .filter(Boolean)
+    .join("");
 
   if (els.spellDetailSide) {
     els.spellDetailSide.innerHTML = `
@@ -2921,6 +3058,27 @@ async function openSpellDetailModal(spell, { sealOnCopy = true, convo = null } =
             String(spell.status || "ready").toLowerCase()
           )}">${escapeHtml(status)}</span>
         </div>
+        <div class="spell-face-lifecycle">
+          ${
+            castCount > 0
+              ? `<span class="spell-face-cast-count">${castCount} cast${
+                  castCount === 1 ? "" : "s"
+                }</span>`
+              : ""
+          }
+          ${
+            lastCast
+              ? `<span class="spell-face-last-cast">Last: ${escapeHtml(
+                  formatSpellTime(lastCast)
+                )}</span>`
+              : ""
+          }
+        </div>
+        ${
+          refineNote
+            ? `<p class="spell-face-refine-note">${escapeHtml(refineNote)}</p>`
+            : ""
+        }
         ${tags ? `<div class="spell-face-tags">${tags}</div>` : ""}
       </div>
       <div class="spell-detail-section">
@@ -2930,35 +3088,28 @@ async function openSpellDetailModal(spell, { sealOnCopy = true, convo = null } =
         )}</p>
         ${contribDetailHtml(contrib)}
       </div>
+      ${
+        dispatchRows
+          ? `<div class="spell-detail-section">
+        <h3>Dispatch Context</h3>
+        <div class="spell-detail-kv">${dispatchRows}</div>
+      </div>`
+          : ""
+      }
       <div class="spell-detail-section">
-        <h3>Target node</h3>
-        <div class="spell-detail-kv">
-          <div><span class="k">Name</span><span class="v">${escapeHtml(target)}</span></div>
-          <div><span class="k">Channel</span><span class="v">${escapeHtml(nodeChannel)}</span></div>
-          <div><span class="k">Model / medium</span><span class="v">${escapeHtml(
-            backend?.name || nodeChannel
-          )}</span></div>
-          <div><span class="k">Intel path</span><span class="v" style="font-size:0.62rem;word-break:break-all">${escapeHtml(
-            String(intelPath)
-          )}</span></div>
-        </div>
-      </div>
-      <div class="spell-detail-section">
-        <h3>Node settings</h3>
-        <div class="spell-detail-kv">
-          <div><span class="k">Format</span><span class="v" style="text-align:left;max-width:58%">${escapeHtml(
-            String(nodeFormat).slice(0, 120)
-          )}</span></div>
-          <div><span class="k">Quirks</span><span class="v" style="text-align:left;max-width:58%">${escapeHtml(
-            String(nodeQuirks).slice(0, 140)
-          )}</span></div>
-          <div><span class="k">Avoids</span><span class="v" style="text-align:left;max-width:58%">${escapeHtml(
-            String(nodeAvoids).slice(0, 100)
-          )}</span></div>
-          <div><span class="k">Purpose</span><span class="v" style="text-align:left;max-width:58%">${escapeHtml(
-            String(nodePurpose).slice(0, 120)
-          )}</span></div>
-        </div>
+        <h3>Linked glyphs</h3>
+        ${
+          linkedGlyphs.length
+            ? `<ul class="spell-glyph-list">${linkedGlyphs
+                .map(
+                  (g) =>
+                    `<li><strong>${escapeHtml(g.title || "Glyph")}</strong> — ${escapeHtml(
+                      String(g.body || "").slice(0, 120)
+                    )}${String(g.body || "").length > 120 ? "…" : ""}</li>`
+                )
+                .join("")}</ul>`
+            : `<p class="contrib-empty">No glyphs yet — Teach glyph to encode operator knowledge.</p>`
+        }
       </div>
     `;
   }
@@ -2987,15 +3138,31 @@ async function openSpellDetailModal(spell, { sealOnCopy = true, convo = null } =
         .join("")}</ul>`
     : `<p class="contrib-empty">v${iter} only — no prior versions</p>`;
 
+  const isHist =
+    spellIsSealed(spell) ||
+    spell.status === "history" ||
+    spell.status === "sent" ||
+    spell.status === "archived";
+  const isArchived = String(spell.status || "").toLowerCase() === "archived";
+  const actionsHtml = isArchived
+    ? `<button type="button" class="btn-spell promote" data-action="detail-cast-again">Cast again</button>
+       <button type="button" class="btn-spell" data-action="detail-unarchive">Unarchive</button>`
+    : isHist
+      ? `<button type="button" class="btn-spell promote" data-action="detail-cast-again">Cast again</button>
+         <button type="button" class="btn-spell" data-action="detail-extract-glyph">Extract glyph</button>
+         <button type="button" class="btn-spell" data-action="detail-archive">Archive</button>`
+      : `<button type="button" class="btn-spell" data-action="detail-teach-glyph">Teach glyph</button>
+         <button type="button" class="btn-spell refine" data-action="detail-refine">Refine from result</button>`;
+
   if (els.spellDetailMain) {
     els.spellDetailMain.innerHTML = `
       <div class="spell-detail-section">
         <h3>Copy / paste directions</h3>
         <p class="spell-detail-directions">${escapeHtml(
           paste ||
-            `Copy this spell and paste it to ${target}. Paste their reply back into the ${
+            `Cast spell copies the payload. Paste it to ${target}, then paste their reply into the ${
               focus?.name || "current"
-            } focus to densen intelligence.`
+            } focus chat to seal.`
         )}</p>
       </div>
       <div class="spell-detail-section">
@@ -3003,32 +3170,101 @@ async function openSpellDetailModal(spell, { sealOnCopy = true, convo = null } =
         <pre class="spell-detail-prompt" id="spell-detail-prompt-text">${escapeHtml(md)}</pre>
       </div>
       <div class="spell-detail-section">
+        <h3>Actions</h3>
+        <div class="spell-lifecycle-actions">${actionsHtml}</div>
+        <div class="spell-glyph-teach" id="spell-glyph-teach" hidden>
+          <label class="spell-glyph-label" for="spell-glyph-input">Explain what this spell should know…</label>
+          <textarea id="spell-glyph-input" class="spell-glyph-input" rows="3" placeholder="e.g. Always include the treaty text in ENGAGE spells to Wizard King"></textarea>
+          <div class="spell-glyph-teach-actions">
+            <button type="button" class="btn-primary btn-sm" data-action="glyph-save">Forge glyph</button>
+            <button type="button" class="btn-secondary btn-sm" data-action="glyph-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+      <div class="spell-detail-section">
         <h3>Version history</h3>
         ${versionHtml}
       </div>
-      <div class="spell-detail-section">
-        <h3>Actions</h3>
-        <div class="spell-expanded-actions" style="display:flex;flex-wrap:wrap;gap:0.4rem">
-          <button type="button" class="btn-spell edit" data-action="detail-edit">Edit face &amp; content</button>
-          <button type="button" class="btn-spell promote" data-action="detail-promote">To Active</button>
-          <button type="button" class="btn-spell refine" data-action="detail-refine">Refine → v${
-            iter + 1
-          }</button>
-        </div>
-      </div>
     `;
-    els.spellDetailMain.querySelector('[data-action="detail-edit"]')?.addEventListener("click", () => {
-      openEditSpellDialog(null, spell);
-      void openSpellDetailModal(spell, { sealOnCopy, convo: focus });
-    });
-    els.spellDetailMain.querySelector('[data-action="detail-promote"]')?.addEventListener("click", () => {
-      promoteSpellToActive(spell.id, { refine: false });
-      closeSpellDetailModal();
-    });
-    els.spellDetailMain.querySelector('[data-action="detail-refine"]')?.addEventListener("click", () => {
-      promoteSpellToActive(spell.id, { refine: true });
-      closeSpellDetailModal();
-    });
+
+    const teachBox = els.spellDetailMain.querySelector("#spell-glyph-teach");
+    const glyphInput = els.spellDetailMain.querySelector("#spell-glyph-input");
+
+    els.spellDetailMain
+      .querySelector('[data-action="detail-teach-glyph"]')
+      ?.addEventListener("click", () => {
+        if (teachBox) teachBox.hidden = false;
+        glyphInput?.focus();
+      });
+    els.spellDetailMain
+      .querySelector('[data-action="detail-extract-glyph"]')
+      ?.addEventListener("click", () => {
+        if (teachBox) {
+          teachBox.hidden = false;
+          if (glyphInput && !glyphInput.value) {
+            glyphInput.value = `Successful pattern from ${spellFaceTitle(spell)}:\n${String(
+              spell.resultNote || spell.subtitle || ""
+            ).slice(0, 400)}`;
+          }
+          glyphInput?.focus();
+        }
+      });
+    els.spellDetailMain
+      .querySelector('[data-action="glyph-cancel"]')
+      ?.addEventListener("click", () => {
+        if (teachBox) teachBox.hidden = true;
+        if (glyphInput) glyphInput.value = "";
+      });
+    els.spellDetailMain
+      .querySelector('[data-action="glyph-save"]')
+      ?.addEventListener("click", async () => {
+        const body = String(glyphInput?.value || "").trim();
+        if (!body) {
+          toast("Explain the teaching first", "");
+          return;
+        }
+        await teachSpellGlyph(spell, focus, body, {
+          scope: isHist ? "focus" : "spell",
+        });
+        if (glyphInput) glyphInput.value = "";
+        if (teachBox) teachBox.hidden = true;
+        void openSpellDetailModal(spell, { convo: focus });
+      });
+    els.spellDetailMain
+      .querySelector('[data-action="detail-refine"]')
+      ?.addEventListener("click", () => {
+        void refineSpellWithGlyphs(spell, focus);
+      });
+    els.spellDetailMain
+      .querySelector('[data-action="detail-cast-again"]')
+      ?.addEventListener("click", async () => {
+        promoteSpellToActive(spell.id, { refine: false });
+        await copySpell(spell.id, { seal: false, awaitReply: true });
+        updateSpellDetailCopyButton();
+        toast("Cast again — paste reply into chat to seal", "success");
+      });
+    els.spellDetailMain
+      .querySelector('[data-action="detail-archive"]')
+      ?.addEventListener("click", () => {
+        spell.status = "archived";
+        spell.updatedAt = Date.now();
+        persist();
+        toast("Spell archived", "success");
+        closeSpellDetailModal();
+        void renderSpells();
+      });
+    els.spellDetailMain
+      .querySelector('[data-action="detail-unarchive"]')
+      ?.addEventListener("click", () => {
+        spell.status = "ready";
+        spell.rebuilt = true;
+        spell.rebuiltAt = Date.now();
+        spell.updatedAt = Date.now();
+        persist();
+        toast("Spell restored to Active", "success");
+        closeSpellDetailModal();
+        void renderSpells();
+      });
   }
 
   updateSpellDetailCopyButton();
@@ -4308,6 +4544,26 @@ function sendMessage(text) {
       clearSpellAwaitReply(awaiting.id, { reason: "cancel" });
       return;
     }
+  }
+
+  // /glyph or "Glyph: …" — teach glyph for active await spell or latest active spell
+  const glyphMatch =
+    userText.match(/^\/glyph\s+([\s\S]+)/i) ||
+    userText.match(/^glyph\s*[:\-—]\s*([\s\S]+)/i);
+  if (glyphMatch) {
+    const body = glyphMatch[1].trim();
+    const targetSpell =
+      getAwaitingSpellForFocus(convo.id) ||
+      activeSpellsFor(convo.id)[0] ||
+      historySpellsFor(convo.id)[0];
+    if (!targetSpell) {
+      toast("No spell to attach glyph to — forge a spell first", "");
+      return;
+    }
+    void teachSpellGlyph(targetSpell, convo, body, { scope: "spell" }).then(() => {
+      void renderSpells();
+    });
+    return;
   }
 
   // === Cell2 Message Bus — local routing (before pulse / normal chat) ===
@@ -7163,6 +7419,8 @@ function markSent(id, { fromCopy = false, fromSelfCast = false, silent = false }
   spell.status = "history";
   spell.sentAt = spell.sentAt || now;
   spell.castTimestamp = spell.castTimestamp || now;
+  spell.lastCast = now;
+  spell.castCount = (Number(spell.castCount) || 0) + 1;
   spell.copiedAt = spell.copiedAt || now;
   spell.rebuilt = false;
   spell.updatedAt = now;
@@ -7739,6 +7997,14 @@ els.btnSpellDetailCopy?.addEventListener("click", async () => {
   if (spell?.awaitingReply) {
     clearSpellAwaitReply(id, { reason: "cancel" });
     return;
+  }
+  // History / archived: cast again (promote + await)
+  const st = String(spell?.status || "").toLowerCase();
+  if (
+    spell &&
+    (spellIsSealed(spell) || st === "history" || st === "sent" || st === "archived")
+  ) {
+    promoteSpellToActive(id, { refine: false });
   }
   await copySpell(id, { seal: false, awaitReply: true });
   updateSpellDetailCopyButton();
