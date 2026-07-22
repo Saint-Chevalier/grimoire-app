@@ -2283,7 +2283,7 @@ function spellTypeForFocus(convo, spell) {
   return "ai";
 }
 
-function renderAll() { try {
+function renderAll() {
   // Heal lifecycle BEFORE any badge math (sidebar was counting pre-heal zombies)
   if (healSpellLifecycles()) persist();
 
