@@ -60,13 +60,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=per-focus-vault-2";
+} from "./data.js?v=per-focus-vault-3";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=per-focus-vault-2";
+} from "./stars.js?v=per-focus-vault-3";
 import {
   initUniverse,
   setFocusUniverse,
@@ -74,7 +74,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=per-focus-vault-2";
+} from "./universe.js?v=per-focus-vault-3";
 import {
   chooseIntelligenceFolder,
   chooseFocusIntelligenceFolder,
@@ -115,12 +115,12 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=per-focus-vault-2";
+} from "./intelligence.js?v=per-focus-vault-3";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=per-focus-vault-2";
+} from "./health.js?v=per-focus-vault-3";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -149,6 +149,7 @@ try {
 }
 // One-time migration: every focus present on first boot after this fix is legacy.
 // Clear onboarding so SCROLL / Wizard King / etc. never show "Create my path".
+// Do NOT set vaultLinked here — folder icon requires a real per-focus LS handle.
 // Only focuses created AFTER this migration get needsPathOnboarding:true (createConversation).
 try {
   const already = localStorage.getItem(PER_FOCUS_VAULT_MIGRATION_KEY) === "1";
@@ -157,10 +158,40 @@ try {
       if (isCell2CoreFocus(c) || !c?.id) continue;
       c.needsPathOnboarding = false;
       c.pathOnboardingDismissed = true;
-      // Implicit vault-backed for pre-per-focus focuses (no callout pressure)
-      if (c.vaultLinked !== true) c.vaultLinked = true;
+      // Soft vaultLinked only if a real folder handle was already chosen
+      if (typeof isFocusVaultLinked === "function" && isFocusVaultLinked(c.id)) {
+        c.vaultLinked = true;
+      } else {
+        c.vaultLinked = false;
+      }
     }
     localStorage.setItem(PER_FOCUS_VAULT_MIGRATION_KEY, "1");
+    try {
+      saveState(state);
+    } catch {
+      /* ignore */
+    }
+  }
+} catch {
+  /* ignore */
+}
+// Repair: earlier migration set vaultLinked=true on every legacy focus.
+// Strip soft flags unless a confirmed per-focus folder exists (icon gate).
+try {
+  let repaired = false;
+  for (const c of state.conversations || []) {
+    if (isCell2CoreFocus(c) || !c?.id) continue;
+    const reallyLinked =
+      typeof isFocusVaultLinked === "function" && isFocusVaultLinked(c.id);
+    if (c.vaultLinked === true && !reallyLinked) {
+      c.vaultLinked = false;
+      repaired = true;
+    } else if (reallyLinked && c.vaultLinked !== true) {
+      c.vaultLinked = true;
+      repaired = true;
+    }
+  }
+  if (repaired) {
     try {
       saveState(state);
     } catch {
@@ -957,10 +988,13 @@ function renderConvoList() {
   console.debug("[sidebar] render end", { rows: flat.length });
 }
 
-/** Per-focus vault linked? (never gate on global vault) */
+/**
+ * Confirmed per-focus vault path only.
+ * Requires LS grimoire-intel-folder-ready-<focusId> === "1" (or live handle).
+ * Soft migration vaultLinked flags alone do NOT count — no icon on legacy rows.
+ */
 function isFocusPathLinked(c) {
   if (!c?.id) return false;
-  if (c.vaultLinked === true) return true;
   try {
     return Boolean(isFocusVaultLinked(c.id));
   } catch {
@@ -985,6 +1019,7 @@ function focusShowsFreshHighlight(c) {
   return focusNeedsPathOnboarding(c);
 }
 
+/** Folder icon / vault-backed class — only when a real folder was linked. */
 function focusIsVaultBacked(c) {
   if (!c || isCell2CoreFocus(c)) return false;
   return isFocusPathLinked(c);
