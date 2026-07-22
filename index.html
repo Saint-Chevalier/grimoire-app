@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=new-focus-create-1" />
+  <link rel="stylesheet" href="css/styles.css?v=app-boot-fix-2" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -398,67 +398,233 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=cell2-export-fix-1"></script>
-  <!-- Early stubs: open/close/create work even before the module finishes loading -->
+  <script type="module" src="js/app.js?v=app-boot-fix-2"></script>
+  <!--
+    Emergency boot (non-module): works even if app.js ES module fails to load.
+    Paints focuses from localStorage + Create persists + reloads.
+  -->
   <script>
-    window.__closeNewFocusModal = window.__closeNewFocusModal || function (e) {
-      if (e && e.preventDefault) e.preventDefault();
-      if (e && e.stopPropagation) e.stopPropagation();
-      var d = document.getElementById("new-convo-dialog");
-      if (!d) return false;
-      d.setAttribute("hidden", "");
-      d.classList.remove("is-open");
-      d.setAttribute("aria-hidden", "true");
-      try {
-        d.style.cssText = "";
-        d.style.setProperty("display", "none", "important");
-      } catch (_) {}
-      var f = document.getElementById("new-convo-form");
-      try { if (f) f.reset(); } catch (_) {}
-      return true;
-    };
-    window.__grimoireCloseNewFocus = window.__closeNewFocusModal;
-    window.__grimoireOpenNewFocus = window.__grimoireOpenNewFocus || function (e) {
-      if (e && e.preventDefault) e.preventDefault();
-      if (window.__openNewFocusModal) {
-        try { window.__openNewFocusModal({ name: "", type: "person" }); return; } catch (err) { console.error(err); }
-      }
-      var d = document.getElementById("new-convo-dialog");
-      if (!d) return;
-      d.removeAttribute("hidden");
-      d.classList.add("is-open");
-      d.setAttribute("aria-hidden", "false");
-      try {
-        d.style.removeProperty("display");
-        d.style.setProperty("display", "flex", "important");
-      } catch (_) {}
-      var n = document.getElementById("new-entity-name");
-      if (n) { try { n.focus(); } catch (_) {} }
-    };
-    // Create stub — module overwrites with full submitNewFocusForm
-    window.__submitNewFocusForm = window.__submitNewFocusForm || function (e) {
-      if (e && e.preventDefault) e.preventDefault();
-      if (window.__createConversation) {
-        var name = (document.getElementById("new-entity-name") || {}).value || "";
-        name = String(name).trim();
-        if (!name) { alert("Focus name required"); return false; }
-        var type = (document.getElementById("new-entity-type") || {}).value || "person";
-        var modelEl = document.getElementById("new-entity-model");
-        var model = type === "ai" ? ((modelEl && modelEl.value) || "none") : "none";
+    (function () {
+      var STORAGE_KEY = "grimoire-mvp-v1";
+
+      function readState() {
         try {
-          window.__createConversation({ name: name, type: type, model: model });
-          window.__closeNewFocusModal && window.__closeNewFocusModal();
-          return true;
-        } catch (err) {
-          console.error(err);
-          alert("Create failed: " + (err && err.message ? err.message : err));
-          return false;
+          var raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return { conversations: [], spells: [], spellsOpen: true, spellView: "active" };
+          var s = JSON.parse(raw);
+          if (!s || typeof s !== "object") throw new Error("bad state");
+          if (!Array.isArray(s.conversations)) s.conversations = [];
+          if (!Array.isArray(s.spells)) s.spells = [];
+          return s;
+        } catch (e) {
+          return { conversations: [], spells: [], spellsOpen: true, spellView: "active" };
         }
       }
-      alert("App still loading — wait a second and click Create again");
-      return false;
-    };
-    window.__grimoireCreateFocus = window.__submitNewFocusForm;
+
+      function writeState(s) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+      }
+
+      function slug(name) {
+        return String(name || "focus")
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "") || "focus";
+      }
+
+      function isVisible(c) {
+        if (!c) return false;
+        if (c.id === "cell2-core") return false;
+        if (c.hidden || c.system) return false;
+        return true;
+      }
+
+      function paintSidebarEmergency() {
+        // Only paint if module never took over (empty list after boot delay)
+        var list = document.getElementById("convo-list");
+        if (!list) return;
+        if (window.__grimoireAppReady) return;
+        if (list.querySelector(".convo-item")) return;
+        var state = readState();
+        var visible = (state.conversations || []).filter(isVisible);
+        if (!visible.length) {
+          list.innerHTML =
+            '<div class="focus-list-empty" style="padding:0.75rem;color:#8b93b8;font-size:0.8rem;">No focuses yet. Click <strong>+ New Focus</strong>.</div>';
+          return;
+        }
+        list.innerHTML = "";
+        visible.forEach(function (c) {
+          var row = document.createElement("button");
+          row.type = "button";
+          row.className = "convo-item" + (c.id === state.activeId ? " active" : "");
+          row.setAttribute("data-focus-id", c.id);
+          row.style.cssText =
+            "display:flex;width:100%;text-align:left;padding:0.55rem 0.75rem;background:transparent;border:0;border-bottom:1px solid rgba(255,255,255,0.06);color:inherit;cursor:pointer;";
+          row.innerHTML =
+            '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+            String(c.name || c.id).replace(/</g, "&lt;") +
+            "</span>";
+          row.onclick = function () {
+            var st = readState();
+            st.activeId = c.id;
+            writeState(st);
+            var title = document.getElementById("entity-name");
+            if (title) title.textContent = c.name || c.id;
+            list.querySelectorAll(".convo-item").forEach(function (el) {
+              el.classList.toggle("active", el.getAttribute("data-focus-id") === c.id);
+            });
+          };
+          list.appendChild(row);
+        });
+        var active = visible.find(function (c) { return c.id === state.activeId; }) || visible[0];
+        if (active) {
+          var title = document.getElementById("entity-name");
+          if (title && (title.textContent === "Select a focus" || !title.textContent)) {
+            title.textContent = active.name || active.id;
+          }
+        }
+      }
+
+      function offlineCreateFocus() {
+        var nameEl = document.getElementById("new-entity-name");
+        var typeEl = document.getElementById("new-entity-type");
+        var modelEl = document.getElementById("new-entity-model");
+        var name = String((nameEl && nameEl.value) || "").trim();
+        if (!name) {
+          alert("Focus name required");
+          if (nameEl) nameEl.focus();
+          return false;
+        }
+        var type = String((typeEl && typeEl.value) || "person").toLowerCase() || "person";
+        if (["person", "place", "thing", "ai", "idea"].indexOf(type) < 0) type = "person";
+        var model = type === "ai" ? String((modelEl && modelEl.value) || "none") : "none";
+        var sealed = type === "ai" && model && model !== "none" ? model : "Open";
+        var state = readState();
+        var idBase = slug(name) + "-" + slug(sealed);
+        var id = idBase;
+        var n = 0;
+        while (state.conversations.some(function (c) { return c.id === id; })) {
+          n += 1;
+          id = idBase + "-" + n;
+        }
+        var now = Date.now();
+        var convo = {
+          id: id,
+          name: name,
+          type: type,
+          model: type === "ai" ? model : "none",
+          backend: sealed,
+          medium: sealed,
+          system: false,
+          hidden: false,
+          certainty: "unknown",
+          messages: [
+            {
+              id: "msg-" + now,
+              role: "grimoire",
+              text: "Focus sealed: **" + name + "** · " + sealed + ".",
+              ts: now,
+            },
+          ],
+          createdAt: now,
+          updatedAt: now,
+          lastViewedAt: now,
+          pinned: false,
+          tags: [],
+          folderId: null,
+        };
+        state.conversations.push(convo);
+        state.activeId = id;
+        writeState(state);
+        return convo;
+      }
+
+      window.__closeNewFocusModal = function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        if (e && e.stopPropagation) e.stopPropagation();
+        var d = document.getElementById("new-convo-dialog");
+        if (!d) return false;
+        d.setAttribute("hidden", "");
+        d.classList.remove("is-open");
+        d.setAttribute("aria-hidden", "true");
+        try {
+          d.style.cssText = "";
+          d.style.setProperty("display", "none", "important");
+        } catch (_) {}
+        var f = document.getElementById("new-convo-form");
+        try { if (f) f.reset(); } catch (_) {}
+        return true;
+      };
+      window.__grimoireCloseNewFocus = window.__closeNewFocusModal;
+
+      window.__grimoireOpenNewFocus = function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        if (window.__grimoireAppReady && window.__openNewFocusModal) {
+          try { window.__openNewFocusModal({ name: "", type: "person" }); return; } catch (err) { console.error(err); }
+        }
+        var d = document.getElementById("new-convo-dialog");
+        if (!d) return;
+        d.removeAttribute("hidden");
+        d.classList.add("is-open");
+        d.setAttribute("aria-hidden", "false");
+        try {
+          d.style.cssText = "";
+          d.style.setProperty("display", "flex", "important");
+          d.style.setProperty("z-index", "10000", "important");
+        } catch (_) {}
+        var n = document.getElementById("new-entity-name");
+        if (n) { try { n.focus(); } catch (_) {} }
+      };
+
+      // ALWAYS can create — uses module when ready, else offline localStorage + reload
+      window.__submitNewFocusForm = function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        if (e && e.stopPropagation) e.stopPropagation();
+        // Prefer full app when module loaded
+        if (window.__grimoireAppReady && typeof window.__createConversation === "function") {
+          var name = String((document.getElementById("new-entity-name") || {}).value || "").trim();
+          if (!name) { alert("Focus name required"); return false; }
+          var type = (document.getElementById("new-entity-type") || {}).value || "person";
+          var modelEl = document.getElementById("new-entity-model");
+          var model = type === "ai" ? ((modelEl && modelEl.value) || "none") : "none";
+          try {
+            window.__createConversation({ name: name, type: type, model: model });
+            window.__closeNewFocusModal();
+            return true;
+          } catch (err) {
+            console.error(err);
+            // fall through to offline
+          }
+        }
+        try {
+          var created = offlineCreateFocus();
+          if (!created) return false;
+          window.__closeNewFocusModal();
+          // Reload so full app (or emergency paint) shows the new focus
+          location.reload();
+          return true;
+        } catch (err2) {
+          console.error(err2);
+          alert("Create failed: " + (err2 && err2.message ? err2.message : err2));
+          return false;
+        }
+      };
+      window.__grimoireCreateFocus = window.__submitNewFocusForm;
+
+      // Emergency paint if module hasn't ready'd after 1.2s
+      setTimeout(function () {
+        if (!window.__grimoireAppReady) {
+          console.warn("[grimoire] app module not ready — emergency sidebar paint");
+          paintSidebarEmergency();
+        }
+      }, 1200);
+      // Also paint soon if list still empty
+      setTimeout(function () {
+        var list = document.getElementById("convo-list");
+        if (list && !list.querySelector(".convo-item")) paintSidebarEmergency();
+      }, 2500);
+    })();
   </script>
 </body>
 </html>

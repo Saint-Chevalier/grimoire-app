@@ -56,13 +56,13 @@ import {
   ensureCertainty,
   classifyIntelCategory,
   normalizeCertainty,
-} from "./data.js";
+} from "./data.js?v=cell2-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js";
+} from "./stars.js?v=cell2-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -70,7 +70,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js";
+} from "./universe.js?v=cell2-1";
 import {
   chooseIntelligenceFolder,
   ensureIntelligenceFolder,
@@ -97,12 +97,12 @@ import {
   CELL2_KINDS,
   CELL2_INTEL_PATH,
   SCROLL_LIST_FILE,
-} from "./intelligence.js";
+} from "./intelligence.js?v=cell2-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js";
+} from "./health.js?v=cell2-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -5802,6 +5802,7 @@ function createConversation({ name, type, model } = {}) {
   }
 }
 window.__createConversation = createConversation;
+window.__grimoireAppReady = true;
 
 /** Guard against double-submit from capture + onclick + form */
 let _newFocusCreating = false;
