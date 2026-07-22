@@ -66,13 +66,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=spell-detail-1";
+} from "./data.js?v=await-paste-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=spell-detail-1";
+} from "./stars.js?v=await-paste-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -80,7 +80,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=spell-detail-1";
+} from "./universe.js?v=await-paste-1";
 import {
   chooseIntelligenceFolder,
   chooseFocusIntelligenceFolder,
@@ -124,12 +124,12 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=spell-detail-1";
+} from "./intelligence.js?v=await-paste-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=spell-detail-1";
+} from "./health.js?v=await-paste-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -321,7 +321,6 @@ const els = {
   spellDetailMain: $("#spell-detail-main"),
   btnSpellDetailClose: $("#btn-spell-detail-close"),
   btnSpellDetailCopy: $("#btn-spell-detail-copy"),
-  btnSpellDetailCast: $("#btn-spell-detail-cast"),
   complexCraftDialog: $("#complex-craft-dialog"),
   btnComplexCraftClose: $("#btn-complex-craft-close"),
   complexCraftSub: $("#complex-craft-sub"),
@@ -473,12 +472,15 @@ function spellsFor(convoId) {
  */
 function spellIsSealed(spell) {
   if (!spell) return true;
+  // Copy-and-await: still Active until reply paste seals the cast
+  if (spell.awaitingReply) return false;
   const st = String(spell.status || "").toLowerCase();
   if (st === "sent" || st === "history" || st === "archived") return true;
   // Any lifecycle stamp = functionally cast (even if status lagged)
   // Exception: refilled/refined ready spells may keep old stamps cleared by heal
   if (spell.rebuilt || spell.rebuiltAt) return false;
-  if (spell.sentAt || spell.answeredAt || spell.selfCastAt || spell.copiedAt) {
+  // copiedAt alone no longer seals — only full cast stamps
+  if (spell.sentAt || spell.answeredAt || spell.selfCastAt || spell.castTimestamp) {
     return true;
   }
   return false;
@@ -513,9 +515,27 @@ function activeReadyCount(convoId) {
  */
 function healSpellLifecycles(spells = state.spells) {
   let changed = false;
+  const now = Date.now();
   for (const s of spells || []) {
     if (!s) continue;
     normalizeSpell(s);
+
+    // Expire stale await-paste windows (10 min)
+    if (s.awaitingReply) {
+      const started = Number(s.awaitingReplyAt || 0);
+      if (started && now - started > AWAIT_REPLY_MS) {
+        s.awaitingReply = false;
+        s.awaitingReplyAt = null;
+        changed = true;
+      } else {
+        // Stay active while awaiting — never seal on copiedAt alone
+        if (String(s.status || "").toLowerCase() !== "ready") {
+          s.status = "ready";
+          changed = true;
+        }
+        continue;
+      }
+    }
 
     // Refilled / refined generation: strip cast stamps; force back to ready
     if (s.rebuilt || s.rebuiltAt) {
@@ -524,11 +544,11 @@ function healSpellLifecycles(spells = state.spells) {
         s.status = "ready";
         changed = true;
       }
-      if (s.sentAt || s.answeredAt || s.selfCastAt || s.copiedAt) {
+      if (s.sentAt || s.answeredAt || s.selfCastAt || s.castTimestamp) {
         s.sentAt = undefined;
         s.answeredAt = undefined;
         s.selfCastAt = undefined;
-        s.copiedAt = undefined;
+        s.castTimestamp = null;
         changed = true;
       }
       continue;
@@ -545,7 +565,8 @@ function healSpellLifecycles(spells = state.spells) {
     if (!spellIsSealed(s)) continue;
 
     s.status = "history";
-    s.sentAt = s.sentAt || s.answeredAt || s.selfCastAt || s.copiedAt || Date.now();
+    s.sentAt = s.sentAt || s.answeredAt || s.selfCastAt || s.castTimestamp || Date.now();
+    s.castTimestamp = s.castTimestamp || s.sentAt;
     s.copiedAt = s.copiedAt || s.sentAt;
     changed = true;
   }
@@ -700,7 +721,11 @@ function librarySpells() {
 
 // ── Node contribution metrics (vault-derived, cached per focus) ──
 const contribCache = new Map(); // focusId -> { at, data }
-let spellDetailContext = null; // { spellId, sealOnCopy }
+let spellDetailContext = null; // { spellId }
+/** Copy → await paste reply → auto-cast (10 min) */
+const AWAIT_REPLY_MS = 10 * 60 * 1000;
+/** @type {Map<string, number>} spellId → timeout handle */
+const awaitReplyTimers = new Map();
 
 function invalidateContribCache(focusId) {
   if (focusId) contribCache.delete(focusId);
@@ -781,6 +806,242 @@ function contribDetailHtml(breakdown) {
     )
     .join("");
   return `<div class="contrib-bar-stack" style="height:10px;margin-bottom:0.55rem">${segs}</div><div class="contrib-rows">${list}</div>`;
+}
+
+/** Clear await-paste on one spell (timeout, cancel, or superseded). */
+function clearSpellAwaitReply(spellId, { silent = false, reason = "" } = {}) {
+  const spell = state.spells.find((s) => s.id === spellId);
+  if (awaitReplyTimers.has(spellId)) {
+    try {
+      clearTimeout(awaitReplyTimers.get(spellId));
+    } catch {
+      /* ignore */
+    }
+    awaitReplyTimers.delete(spellId);
+  }
+  if (!spell) return;
+  if (!spell.awaitingReply && !spell.awaitingReplyAt) return;
+  spell.awaitingReply = false;
+  spell.awaitingReplyAt = null;
+  persist();
+  if (!silent) {
+    if (reason === "timeout") {
+      toast("Await reply timed out — spell still Active", "");
+    } else if (reason === "cancel") {
+      toast("Await cancelled", "");
+    }
+  }
+  updateSpellDetailCopyButton();
+  void renderSpells();
+}
+
+/** Only one await per focus — cancel others on that focus. */
+function clearOtherAwaitsOnFocus(focusId, exceptSpellId) {
+  for (const s of state.spells || []) {
+    if (!s?.awaitingReply) continue;
+    if (s.conversationId !== focusId) continue;
+    if (s.id === exceptSpellId) continue;
+    clearSpellAwaitReply(s.id, { silent: true });
+  }
+}
+
+/**
+ * After "Copy spell": enter await-paste state (do NOT seal yet).
+ * Persists awaitingReply so close modal / refresh keeps state.
+ */
+function scheduleAwaitReplyTimeout(spellId, remainingMs) {
+  if (awaitReplyTimers.has(spellId)) {
+    try {
+      clearTimeout(awaitReplyTimers.get(spellId));
+    } catch {
+      /* ignore */
+    }
+  }
+  const ms = Math.max(1000, Number(remainingMs) || AWAIT_REPLY_MS);
+  const t = setTimeout(() => {
+    awaitReplyTimers.delete(spellId);
+    const still = state.spells.find((s) => s.id === spellId);
+    if (still?.awaitingReply) {
+      clearSpellAwaitReply(spellId, { reason: "timeout" });
+    }
+  }, ms);
+  awaitReplyTimers.set(spellId, t);
+}
+
+/** Restore await timers after page load (state persists awaitingReply). */
+function restoreAwaitReplyTimers() {
+  const now = Date.now();
+  let changed = false;
+  for (const s of state.spells || []) {
+    if (!s?.awaitingReply) continue;
+    const started = Number(s.awaitingReplyAt || 0);
+    if (!started || now - started > AWAIT_REPLY_MS) {
+      s.awaitingReply = false;
+      s.awaitingReplyAt = null;
+      changed = true;
+      continue;
+    }
+    scheduleAwaitReplyTimeout(s.id, AWAIT_REPLY_MS - (now - started));
+  }
+  if (changed) persist();
+}
+
+function beginSpellAwaitReply(spellId) {
+  const spell = state.spells.find((s) => s.id === spellId);
+  if (!spell) return null;
+  normalizeSpell(spell);
+  const focusId = spell.conversationId || activeConvo()?.id;
+  if (focusId) clearOtherAwaitsOnFocus(focusId, spellId);
+
+  spell.awaitingReply = true;
+  spell.awaitingReplyAt = Date.now();
+  spell.copiedAt = Date.now();
+  spell.status = "ready";
+  spell.rebuilt = false;
+  // Do not set sentAt / castTimestamp yet
+
+  scheduleAwaitReplyTimeout(spellId, AWAIT_REPLY_MS);
+
+  persist();
+  updateSpellDetailCopyButton();
+  void renderSpells();
+  return spell;
+}
+
+/** Find active await spell for a focus (or any if focusId null). */
+function getAwaitingSpellForFocus(focusId) {
+  const list = (state.spells || []).filter((s) => s && s.awaitingReply);
+  if (!list.length) return null;
+  if (focusId) {
+    return list.find((s) => s.conversationId === focusId) || null;
+  }
+  return list[0] || null;
+}
+
+function updateSpellDetailCopyButton() {
+  const btn = els.btnSpellDetailCopy;
+  if (!btn) return;
+  const id = spellDetailContext?.spellId;
+  const spell = id ? state.spells.find((s) => s.id === id) : null;
+  if (spell?.awaitingReply) {
+    btn.textContent = "Awaiting reply…";
+    btn.classList.add("awaiting-reply");
+    btn.disabled = false;
+    btn.title = "Paste the AI reply into chat to seal this cast · click again to cancel await";
+  } else {
+    btn.textContent = "Copy spell";
+    btn.classList.remove("awaiting-reply");
+    btn.disabled = false;
+    btn.title = "Copy spell to clipboard and wait for paste-reply in chat";
+  }
+}
+
+/**
+ * Paste into chat while awaiting → densen as spell result + seal to history.
+ * Returns true if handled (caller should skip normal send if desired).
+ */
+async function handleAwaitPasteReply(convo, pastedText) {
+  if (!convo || isFocusLocked(convo)) return false;
+  const text = String(pastedText || "").trim();
+  if (!text) return false;
+
+  // Explicit cancel
+  if (/^cancel$/i.test(text)) {
+    const awaiting = getAwaitingSpellForFocus(convo.id);
+    if (awaiting) {
+      clearSpellAwaitReply(awaiting.id, { reason: "cancel" });
+      return true;
+    }
+    return false;
+  }
+
+  const spell = getAwaitingSpellForFocus(convo.id);
+  if (!spell) return false;
+
+  // Any paste while awaiting seals (user explicitly copied the spell first)
+  const now = Date.now();
+  spell.awaitingReply = false;
+  spell.awaitingReplyAt = null;
+  if (awaitReplyTimers.has(spell.id)) {
+    try {
+      clearTimeout(awaitReplyTimers.get(spell.id));
+    } catch {
+      /* ignore */
+    }
+    awaitReplyTimers.delete(spell.id);
+  }
+
+  spell.answeredAt = now;
+  spell.castTimestamp = now;
+  spell.resultNote = text.slice(0, 500);
+
+  // Densen reply into focus vault as spell result (source = target node when known)
+  const sourceName =
+    String(spell.target || "").trim() &&
+    String(spell.target).toLowerCase() !== String(convo.name || "").toLowerCase()
+      ? String(spell.target).trim()
+      : "user";
+  try {
+    await appendEntityIntelligence(convo, {
+      body: [
+        `**Spell reply sealed** · ${spellFaceTitle(spell)} · v${spell.iteration || 1}`,
+        `Target: ${spell.target || convo.name}`,
+        ``,
+        text.slice(0, 12000),
+      ].join("\n"),
+      source: sourceName,
+      category: isAlignmentSpell(spell) ? "identity" : "node_intel",
+      certainty: "confirmed",
+      tags: ["spell-reply", "auto-cast", spell.kind || "spell"].filter(Boolean),
+    });
+    invalidateContribCache(convo.id);
+  } catch (err) {
+    console.warn("[await-paste] vault densen failed", err);
+  }
+
+  // Alignment unlock when pasting reveal
+  if (isAlignmentSpell(spell) || /alignment|transparency/i.test(spellFaceTitle(spell))) {
+    try {
+      convo.alignmentNotes = text.slice(0, 8000);
+      convo.alignmentReceived = true;
+      convo.alignmentProfile = parseAlignmentIntelligence(text);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Push chat bubbles for the densen
+  convo.messages = convo.messages || [];
+  convo.messages.push({
+    id: uid("msg"),
+    role: "user",
+    text,
+    ts: now,
+    kind: "inbound-intel",
+    spellId: spell.id,
+  });
+  convo.messages.push({
+    id: uid("msg"),
+    role: "grimoire",
+    text: `**Reply received and sealed.** Spell **${spellFaceTitle(spell)}** (v${
+      spell.iteration || 1
+    }) → Cast History. Intelligence densened from **${sourceName}**.`,
+    ts: now,
+    kind: "spell-reply-ack",
+  });
+  convo.updatedAt = now;
+
+  markSent(spell.id, { fromCopy: false, silent: true });
+  // markSent sets history; ensure cast timestamp
+  spell.castTimestamp = spell.castTimestamp || now;
+  spell.awaitingReply = false;
+
+  toast("Reply received and sealed", "success");
+  activityPing(`✦ Reply sealed · ${spellFaceTitle(spell)}`);
+  persist();
+  updateSpellDetailCopyButton();
+  void renderAll();
+  return true;
 }
 
 /** Promote a history/library spell back to Active (repeat cast). Optionally refine. */
@@ -2267,16 +2528,21 @@ async function renderSpells() {
       ) {
         spell.kind = "self-cast";
       }
+      const isAwaiting = Boolean(spell.awaitingReply);
       item.className =
         "spell-item spell-face-card spell-tap-copy" +
         (isHist ? " spell-history" : "") +
         (mode === "primary" ? " spell-primary" : mode === "library" ? " spell-library" : " spell-hold") +
-        (showSelf ? " spell-self-castable" : "");
+        (showSelf ? " spell-self-castable" : "") +
+        (isAwaiting ? " spell-awaiting-reply" : "");
       item.dataset.spellId = spell.id;
       if (showSelf) item.dataset.selfCast = "1";
+      if (isAwaiting) item.dataset.awaitingReply = "1";
       item.setAttribute("role", "button");
       item.setAttribute("tabindex", "0");
-      item.title = "Click to open spell detail";
+      item.title = isAwaiting
+        ? "Awaiting paste reply in chat — click for detail"
+        : "Click to open spell detail";
 
       const timeBits = [];
       if (spell.createdAt) timeBits.push(`forged ${formatSpellTime(spell.createdAt)}`);
@@ -2298,10 +2564,21 @@ async function renderSpells() {
 
       item.innerHTML = `
         <button type="button" class="delete-btn" data-action="delete" title="${isHist ? "Prune from history" : "Delete spell"}">✕</button>
+        ${
+          isAwaiting
+            ? `<button type="button" class="spell-await-cancel" data-action="cancel-await" title="Cancel await reply">×</button>
+               <div class="spell-await-banner" aria-live="polite">
+                 <span class="spell-await-pulse" aria-hidden="true"></span>
+                 <span>pasted Reply expected</span>
+               </div>`
+            : ""
+        }
         ${spellCardFaceHtml(spell, owner, { contrib: cardContrib })}
         ${timeLine}
         <div class="spell-actions spell-actions-compact">
-          <span class="spell-tap-hint" aria-hidden="true">click for detail</span>
+          <span class="spell-tap-hint" aria-hidden="true">${
+            isAwaiting ? "paste reply in chat to seal" : "click for detail"
+          }</span>
           ${
             shouldShowSelfCastButton(spell, owner)
               ? `<button type="button" class="btn-spell self-cast" data-action="self-cast" title="SELF-CAST into Focus chat">SELF-CAST</button>`
@@ -2310,7 +2587,7 @@ async function renderSpells() {
         </div>
       `;
       wireSpellCardActions(item, spell, {
-        sealOnCopy: !isHist && mode !== "library",
+        sealOnCopy: false,
         convo: owner,
       });
       els.spellsList.appendChild(item);
@@ -2548,6 +2825,10 @@ function wireSpellCardActions(item, spell, { sealOnCopy, convo }) {
       requestDeleteSpell(spell.id, e.currentTarget);
     });
   });
+  item.querySelector('[data-action="cancel-await"]')?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    clearSpellAwaitReply(spell.id, { reason: "cancel" });
+  });
   item.querySelectorAll('[data-action="self-cast"]').forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -2557,7 +2838,7 @@ function wireSpellCardActions(item, spell, { sealOnCopy, convo }) {
 
   const openDetail = (event) => {
     if (event?.target?.closest?.("button, a, input, textarea")) return;
-    void openSpellDetailModal(spell, { sealOnCopy, convo });
+    void openSpellDetailModal(spell, { sealOnCopy: false, convo });
   };
 
   item.addEventListener("click", openDetail);
@@ -2577,7 +2858,7 @@ async function openSpellDetailModal(spell, { sealOnCopy = true, convo = null } =
   if (!spell || !els.spellDetailDialog) return;
   normalizeSpell(spell);
   const focus = resolveSpellFocus(spell, convo || activeConvo());
-  spellDetailContext = { spellId: spell.id, sealOnCopy: Boolean(sealOnCopy) };
+  spellDetailContext = { spellId: spell.id };
 
   // Metrics for the focus that owns the intelligence (usually active focus)
   const metricFocus = activeConvo() || focus;
@@ -2749,6 +3030,8 @@ async function openSpellDetailModal(spell, { sealOnCopy = true, convo = null } =
       closeSpellDetailModal();
     });
   }
+
+  updateSpellDetailCopyButton();
 
   try {
     if (typeof els.spellDetailDialog.showModal === "function") {
@@ -4017,6 +4300,15 @@ function sendMessage(text) {
   }
 
   const userText = (text || "").trim();
+
+  // Cancel await-paste via typed "cancel"
+  if (/^cancel$/i.test(userText)) {
+    const awaiting = getAwaitingSpellForFocus(convo.id);
+    if (awaiting) {
+      clearSpellAwaitReply(awaiting.id, { reason: "cancel" });
+      return;
+    }
+  }
 
   // === Cell2 Message Bus — local routing (before pulse / normal chat) ===
   const busCmd = parseBusCommand(userText);
@@ -6806,9 +7098,10 @@ function castSpell() {
   );
 }
 
-async function copySpell(id, { seal = true } = {}) {
+async function copySpell(id, { seal = true, awaitReply = false } = {}) {
   const spell = state.spells.find((s) => s.id === id);
   if (!spell) return;
+  normalizeSpell(spell);
   const md = formatSpellMarkdown(spell);
   try {
     await navigator.clipboard.writeText(md);
@@ -6826,15 +7119,28 @@ async function copySpell(id, { seal = true } = {}) {
   // densen general spell targets onto derivedNodes on successful copy
   const copyConvo = state.conversations.find((c) => c.id === spell.conversationId);
   if (copyConvo) populateDerivedNodesFromSpells(copyConvo);
-  // Automagic cast close: Copy of an active spell == sent into the world
-  if (seal && spell.status !== "sent") {
+
+  // Preferred cast flow: copy → await paste reply → auto-seal (no immediate cast)
+  if (awaitReply) {
+    beginSpellAwaitReply(id);
+    const focus = state.conversations.find((c) => c.id === spell.conversationId);
+    const paste = spellPasteHint(spell, focus);
+    toast(
+      paste
+        ? `Copied — paste reply into chat to seal`
+        : "Copied — paste the AI reply into chat to seal",
+      "success"
+    );
+    return;
+  }
+
+  // Legacy: immediate seal on copy (SELF-CAST / explicit seal)
+  if (seal && !spellIsSealed(spell)) {
     markSent(id, { fromCopy: true });
   } else {
     persist();
-    renderSpells();
-    const focus = state.conversations.find((c) => c.id === spell.conversationId);
-    const paste = spellPasteHint(spell, focus);
-    toast(paste ? `Copied — ${paste}` : "Spell copied", "success");
+    void renderSpells();
+    toast("Spell copied", "success");
   }
 }
 
@@ -6843,8 +7149,20 @@ function markSent(id, { fromCopy = false, fromSelfCast = false, silent = false }
   if (!spell) return;
   normalizeSpell(spell);
   const now = Date.now();
+  // Leave await-paste mode
+  spell.awaitingReply = false;
+  spell.awaitingReplyAt = null;
+  if (awaitReplyTimers.has(id)) {
+    try {
+      clearTimeout(awaitReplyTimers.get(id));
+    } catch {
+      /* ignore */
+    }
+    awaitReplyTimers.delete(id);
+  }
   spell.status = "history";
   spell.sentAt = spell.sentAt || now;
+  spell.castTimestamp = spell.castTimestamp || now;
   spell.copiedAt = spell.copiedAt || now;
   spell.rebuilt = false;
   spell.updatedAt = now;
@@ -7224,6 +7542,26 @@ els.chatInput?.addEventListener("paste", (e) => {
   if (files.length) {
     e.preventDefault();
     queuePastedImages(files);
+    return;
+  }
+
+  // Auto-cast: if a spell is awaiting reply, any text paste seals it
+  const awaiting = getAwaitingSpellForFocus(convo.id);
+  if (awaiting && !isFocusLocked(convo)) {
+    const pasted = e.clipboardData?.getData("text/plain") || "";
+    if (pasted && pasted.trim()) {
+      e.preventDefault();
+      // Don't leave the reply sitting in the input — handle densen + seal
+      if (els.chatInput) els.chatInput.value = "";
+      autoResizeTextarea();
+      void handleAwaitPasteReply(convo, pasted).then((handled) => {
+        if (!handled && els.chatInput) {
+          // Fallback: put text back if not handled
+          els.chatInput.value = pasted;
+          autoResizeTextarea();
+        }
+      });
+    }
   }
 });
 
@@ -7393,18 +7731,14 @@ els.spellDetailDialog?.addEventListener("click", (e) => {
 els.btnSpellDetailCopy?.addEventListener("click", async () => {
   const id = spellDetailContext?.spellId;
   if (!id) return;
-  await copySpell(id, { seal: false });
-  toast("Spell content copied", "success");
-});
-els.btnSpellDetailCast?.addEventListener("click", async () => {
-  const id = spellDetailContext?.spellId;
-  if (!id) return;
-  const seal = spellDetailContext?.sealOnCopy !== false;
-  await copySpell(id, { seal });
-  closeSpellDetailModal();
-  const focus = activeConvo();
-  if (focus) invalidateContribCache(focus.id);
-  void renderSpells();
+  const spell = state.spells.find((s) => s.id === id);
+  // Second click while awaiting = cancel await
+  if (spell?.awaitingReply) {
+    clearSpellAwaitReply(id, { reason: "cancel" });
+    return;
+  }
+  await copySpell(id, { seal: false, awaitReply: true });
+  updateSpellDetailCopyButton();
 });
 
 // Universe view — hide AI chat; pure intelligence sky (Focus = nucleus)
@@ -7943,6 +8277,8 @@ applyUniverseViewMode();
 state.spells = dedupeSpells(
   (state.spells || []).filter((s) => !isReceiptSpell(s))
 );
+// Restore copy→await-paste timers (persisted awaitingReply)
+restoreAwaitReplyTimers();
 // Boot: auto-generate curiosity + proactive ENGAGE for active Focus
 {
   const bootFocus = activeConvo();

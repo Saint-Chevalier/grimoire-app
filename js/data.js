@@ -999,6 +999,13 @@ export function normalizeSpell(spell) {
     spell.inLibrary = true; // all spells catalogued; Active filters by focus + status
   }
 
+  // Await-paste cast flow (copy spell → paste reply → auto-seal)
+  if (typeof spell.awaitingReply !== "boolean") spell.awaitingReply = false;
+  if (spell.awaitingReplyAt == null) spell.awaitingReplyAt = null;
+  if (spell.castTimestamp == null) {
+    spell.castTimestamp = spell.sentAt || spell.answeredAt || null;
+  }
+
   return spell;
 }
 
