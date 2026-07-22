@@ -80,7 +80,8 @@ export function normalizeCertainty(value) {
 export function ensureCertainty(convo) {
   if (!convo || typeof convo !== "object") return "unknown";
   convo.certainty = normalizeCertainty(convo.certainty);
-  if (convo.archetype !== undefined) delete convo.archetype;
+  // No archetype fields anywhere — strip undefined/null/legacy keys
+  if ("archetype" in convo) delete convo.archetype;
   return convo.certainty;
 }
 

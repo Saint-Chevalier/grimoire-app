@@ -113,9 +113,8 @@ const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
 const state = loadState();
 // Silent migration: strip archetype from existing conversations (legacy purge)
 for (const c of state.conversations || []) {
-  if (c.archetype !== undefined) {
-    delete c.archetype;
-  }
+  if ("archetype" in c) delete c.archetype;
+  ensureCertainty(c);
 }
 // SCROLL eternal-intelligence Focus (idempotent seed after load)
 ensureScrollFocus(state);
