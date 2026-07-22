@@ -95,7 +95,6 @@ import {
   entityIntelPath,
   entityIdFromFocus,
   CELL2_KINDS,
-  CELL2_INTEL_FILE,
   CELL2_INTEL_PATH,
   SCROLL_LIST_FILE,
 } from "./intelligence.js";
