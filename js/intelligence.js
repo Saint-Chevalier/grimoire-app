@@ -13,6 +13,8 @@ import {
   getSealedChannel,
   isAlignmentSpell,
   formatSpellMarkdown,
+  isCell2CoreFocus,
+  CELL2_CORE_NAME,
 } from "./data.js";
 import { computeFocusHealth } from "./health.js";
 
@@ -22,6 +24,16 @@ const IDB_KEY = "intelligence-dir";
 const LS_SETUP = "grimoire-intel-folder-ready";
 const LS_NAME = "grimoire-intel-folder-name";
 const INTEL_DIR_NAME = "GRIMOIRE-FocusIntelligence";
+
+/** Fixed vault filename for Cell2 self-intelligence (append-only neural log) */
+export const CELL2_INTEL_FILE = "Cell2 Core - Neural.md";
+
+/** Entry schema tags */
+export const CELL2_KINDS = Object.freeze({
+  NEURAL_EVENT: "NEURAL_EVENT",
+  DOCTRINE: "DOCTRINE",
+  REGRESSION: "REGRESSION",
+});
 
 /** @type {FileSystemDirectoryHandle|null} */
 let dirHandle = null;
@@ -159,6 +171,7 @@ This folder is Grimoire's local vault. **One Focus = one sealed channel = one \`
 \`\`\`
 GRIMOIRE-FocusIntelligence/
   README.md
+  Cell2 Core - Neural.md   ← append-only self-intelligence substrate
   Wizard King - Hermes.md
   Wizard King - Grok.md
   Healer - Hermes.md
@@ -171,6 +184,8 @@ GRIMOIRE-FocusIntelligence/
 2. **Channel purity** — each file is ONE receiver only.
 3. **Living logs** — every spell cast and alignment reply updates the Focus file.
 4. **Survives the app** — if the UI dies, the knowledge stays on disk.
+5. **Cell2 Core** — \`Cell2 Core - Neural.md\` is append-only neural substrate
+   (\`[NEURAL_EVENT]\` · \`[DOCTRINE]\` · \`[REGRESSION]\`). Never truncate.
 
 ## File sections
 
@@ -282,11 +297,250 @@ function sanitizeFilePart(s) {
   );
 }
 
-/** Filename: "Wizard King - Hermes.md" */
+/** Filename: "Wizard King - Hermes.md" (Cell2 Core uses fixed neural file) */
 export function focusFileName(focus) {
+  if (isCell2CoreFocus(focus)) return CELL2_INTEL_FILE;
   const name = sanitizeFilePart(focus.name);
   const ch = sanitizeFilePart(getSealedChannel(focus));
   return `${name} - ${ch}.md`;
+}
+
+/**
+ * Classify raw operator text into Cell2 schema tag.
+ * @returns {"NEURAL_EVENT"|"DOCTRINE"|"REGRESSION"}
+ */
+export function classifyCell2Kind(text) {
+  const t = String(text || "");
+  if (
+    /\b(regression|anti[- ]?pattern|do not reintroduce|never reintroduce|already[- ]broken|broken before|do not re-?add|do not restore)\b/i.test(
+      t
+    )
+  ) {
+    return CELL2_KINDS.REGRESSION;
+  }
+  if (
+    /\b(doctrine|eternal rule|must always|lane boundar|build protocol|archetype purge|type-only|sealed channel law|operator law)\b/i.test(
+      t
+    )
+  ) {
+    return CELL2_KINDS.DOCTRINE;
+  }
+  return CELL2_KINDS.NEURAL_EVENT;
+}
+
+/**
+ * Spicy markdown block for one Cell2 neural entry (append unit).
+ */
+export function formatCell2Entry(kind, content, meta = {}) {
+  const tag = CELL2_KINDS[kind] || kind || CELL2_KINDS.NEURAL_EVENT;
+  const ts = meta.ts || Date.now();
+  const when = fmtDateTime(ts);
+  const source = meta.source ? String(meta.source).trim() : "";
+  const body = String(content || "").trim() || "_empty_";
+  const lines = [
+    `---`,
+    `## [${tag}] ${when}`,
+  ];
+  if (source) lines.push(`**Source:** ${source}`);
+  lines.push("");
+  lines.push(body);
+  lines.push("");
+  return lines.join("\n");
+}
+
+function cell2Header() {
+  return [
+    `# Cell2 Core — Neural Substrate`,
+    ``,
+    `**Focus:** ${CELL2_CORE_NAME}`,
+    `**Channel:** Neural`,
+    `**Mode:** append-only · ever-growing · permanent self-intelligence`,
+    ``,
+    `Schema:`,
+    `- \`[NEURAL_EVENT]\` — interaction truths (preferences, grievances, doctrine-in-flight)`,
+    `- \`[DOCTRINE]\` — eternal rules (lane boundaries, build protocol, type-only model)`,
+    `- \`[REGRESSION]\` — anti-patterns (do not reintroduce · already-broken-before)`,
+    ``,
+    `_Written by Grimoire · Cell2 Self-Intelligence_`,
+    ``,
+  ].join("\n");
+}
+
+/**
+ * Seed doctrine bootstrap entries (in-memory + returned blocks for first vault write).
+ */
+export function seedCell2DoctrineEntries() {
+  const ts = Date.now();
+  return [
+    {
+      ts,
+      kind: CELL2_KINDS.DOCTRINE,
+      content:
+        "Type-only model. Archetype fields purged forever. Identity = Focus name + type + optional model. Never reintroduce archetype dropdowns or `convo.archetype`.",
+      source: "system-bootstrap",
+    },
+    {
+      ts: ts + 1,
+      kind: CELL2_KINDS.DOCTRINE,
+      content:
+        "Lane boundaries: 1 Focus = 1 sealed channel = one world. Spells densen back to the open Focus nucleus. No cross-channel multiplexing.",
+      source: "system-bootstrap",
+    },
+    {
+      ts: ts + 2,
+      kind: CELL2_KINDS.DOCTRINE,
+      content:
+        "Build protocol: verify with node --check, reload localhost, prove the path, then commit and push. No silent half-fixes.",
+      source: "system-bootstrap",
+    },
+    {
+      ts: ts + 3,
+      kind: CELL2_KINDS.REGRESSION,
+      content:
+        "Do not reintroduce bare `try {` without catch/finally (module parse crash). Do not assign string literals as LHS. Do not leave `null.value` / nullLabel stubs after purges.",
+      source: "system-bootstrap",
+    },
+  ];
+}
+
+/**
+ * Append-only write to Cell2 neural file in GRIMOIRE-FocusIntelligence/.
+ * Never drops prior content. Also mirrors onto focus.neuralLog for BRAIN UI.
+ */
+export async function appendCell2Intelligence(focus, { kind, content, source } = {}) {
+  if (!focus || !isCell2CoreFocus(focus)) {
+    return { ok: false, method: "not-cell2" };
+  }
+  const entry = {
+    ts: Date.now(),
+    kind: kind || classifyCell2Kind(content),
+    content: String(content || "").trim(),
+    source: source || "interaction",
+  };
+  if (!entry.content) return { ok: false, method: "empty" };
+
+  if (!Array.isArray(focus.neuralLog)) focus.neuralLog = [];
+  focus.neuralLog.push(entry);
+  // Memory keeps full substrate; disk is source of truth when vault linked
+  pushFocusEvent(focus, entry.kind, entry.content);
+
+  const block = formatCell2Entry(entry.kind, entry.content, {
+    ts: entry.ts,
+    source: entry.source,
+  });
+  const name = CELL2_INTEL_FILE;
+  const fsAvailable = hasDirectoryPicker();
+  const handle = dirHandle || (await restoreIntelligenceFolder());
+
+  if (handle && fsAvailable) {
+    try {
+      const fileHandle = await handle.getFileHandle(name, { create: true });
+      let existing = await readExistingFocusText(fileHandle).catch(() => "");
+      if (!existing || !String(existing).trim()) {
+        existing = cell2Header();
+        // first write also stamps bootstrap doctrine if log was empty
+        if (focus.neuralLog.length <= 1) {
+          const seeds = seedCell2DoctrineEntries();
+          for (const s of seeds) {
+            if (!focus.neuralLog.some((e) => e.content === s.content)) {
+              focus.neuralLog.unshift(s);
+              existing += formatCell2Entry(s.kind, s.content, {
+                ts: s.ts,
+                source: s.source,
+              });
+            }
+          }
+        }
+      }
+      const next = String(existing).replace(/\s*$/, "") + "\n" + block;
+      const writable = await fileHandle.createWritable();
+      await writable.write(next);
+      await writable.close();
+      return { ok: true, method: "filesystem", fileName: name, entry };
+    } catch (err) {
+      console.warn("Cell2 append failed", err);
+      return { ok: false, method: "error", fileName: name, error: String(err), entry };
+    }
+  }
+
+  // No vault — keep memory log; optional download only if explicitly allowed later
+  return { ok: true, method: "memory", fileName: name, entry };
+}
+
+/**
+ * Read Cell2 intelligence log: vault file if available, else in-memory neuralLog.
+ * @returns {Promise<{ text: string, entries: array, method: string }>}
+ */
+export async function readCell2IntelligenceLog(focus) {
+  const name = CELL2_INTEL_FILE;
+  const memEntries = Array.isArray(focus?.neuralLog) ? focus.neuralLog : [];
+  const fsAvailable = hasDirectoryPicker();
+  const handle = dirHandle || (await restoreIntelligenceFolder());
+
+  if (handle && fsAvailable) {
+    try {
+      const fileHandle = await handle.getFileHandle(name, { create: false });
+      const text = await readExistingFocusText(fileHandle);
+      return { text, entries: memEntries, method: "filesystem", fileName: name };
+    } catch {
+      /* fall through to memory */
+    }
+  }
+
+  const parts = [cell2Header()];
+  for (const e of memEntries) {
+    parts.push(
+      formatCell2Entry(e.kind, e.content, { ts: e.ts, source: e.source })
+    );
+  }
+  if (memEntries.length === 0) {
+    parts.push("_No neural entries yet. Speak to Grimoire or Cast Spell into Cell2 Core._\n");
+  }
+  return {
+    text: parts.join("\n"),
+    entries: memEntries,
+    method: handle ? "memory" : "no-folder",
+    fileName: name,
+  };
+}
+
+/**
+ * Ensure Cell2 vault file exists with header + bootstrap doctrine (once).
+ */
+export async function ensureCell2IntelligenceFile(focus) {
+  if (!focus || !isCell2CoreFocus(focus)) return { ok: false };
+  if (!Array.isArray(focus.neuralLog)) focus.neuralLog = [];
+  if (focus.neuralLog.length === 0) {
+    const seeds = seedCell2DoctrineEntries();
+    for (const s of seeds) focus.neuralLog.push(s);
+  }
+  const name = CELL2_INTEL_FILE;
+  const fsAvailable = hasDirectoryPicker();
+  const handle = dirHandle || (await restoreIntelligenceFolder());
+  if (!handle || !fsAvailable) {
+    return { ok: true, method: "memory", fileName: name };
+  }
+  try {
+    const fileHandle = await handle.getFileHandle(name, { create: true });
+    const existing = await readExistingFocusText(fileHandle).catch(() => "");
+    if (existing && String(existing).trim()) {
+      return { ok: true, method: "filesystem", fileName: name, skipped: true };
+    }
+    let body = cell2Header();
+    for (const s of focus.neuralLog) {
+      body += formatCell2Entry(s.kind, s.content, {
+        ts: s.ts,
+        source: s.source,
+      });
+    }
+    const writable = await fileHandle.createWritable();
+    await writable.write(body);
+    await writable.close();
+    return { ok: true, method: "filesystem", fileName: name };
+  } catch (err) {
+    console.warn("Cell2 ensure file failed", err);
+    return { ok: false, method: "error", fileName: name, error: String(err) };
+  }
 }
 
 function fmtDate(ts = Date.now()) {

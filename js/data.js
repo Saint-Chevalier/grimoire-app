@@ -11,18 +11,33 @@ export const FOCUS_TYPES = ["person", "place", "thing", "ai", "idea", "network"]
 /** Communication mediums */
 export const MEDIUMS = ["Hermes", "Discord", "LinkedIn", "Text", "Email", "X", "Claude", "ChatGPT", "Grok", "Local", "Custom"];
 
+/** Canonical purpose string for Alignment Reveal spells */
+export const ALIGNMENT_PURPOSE = "TRANSPARENCY & ALIGNMENT REVEAL";
+
+/** Cell2 Self-Intelligence system focus — app neural substrate */
+export const CELL2_CORE_ID = "cell2-core";
+export const CELL2_CORE_NAME = "Cell2 Core";
 
 /**
- * Normalize legacy type values → person | ai | network
+ * Normalize legacy type values → person | ai | network | self-intelligence | …
  */
 export function getFocusType(convo) {
   if (!convo) return "person";
   const t = convo.type;
+  if (t === "self-intelligence") return "self-intelligence";
   if (t === "eternal-intelligence") return "eternal-intelligence";
   if (t === "ai" || t === "ai-node") return "ai";
   if (t === "network" || t === "broadcast") return "network";
   if (t === "person" || t === "place" || t === "thing" || t === "idea") return t;
   return "person";
+}
+
+/** True when Focus is the Cell2 Core self-intelligence engine */
+export function isCell2CoreFocus(convo) {
+  if (!convo) return false;
+  if (convo.id === CELL2_CORE_ID) return true;
+  if (String(convo.name || "").trim().toLowerCase() === "cell2 core") return true;
+  return getFocusType(convo) === "self-intelligence";
 }
 
 // archetypeFromType removed; derive model/channel from type field directly
@@ -50,6 +65,10 @@ export function getSealedChannel(focus) {
   if (!focus) return "—";
   const t = getFocusType(focus);
   if (t === "person") return "Open";
+  // Cell2 Core — permanent neural channel
+  if (t === "self-intelligence") {
+    return focus.channel || focus.backend || focus.medium || "Neural";
+  }
   // SCROLL / eternal intelligence — Hermes channel by default
   if (t === "eternal-intelligence") {
     return (
@@ -108,9 +127,28 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
   let t = type || getFocusType(convo);
   if (t === "ai-node") t = "ai";
   if (t === "broadcast") t = "network";
-  const valid = ["person", "place", "thing", "ai", "idea", "network", "eternal-intelligence"];
+  const valid = [
+    "person",
+    "place",
+    "thing",
+    "ai",
+    "idea",
+    "network",
+    "eternal-intelligence",
+    "self-intelligence",
+  ];
   if (!valid.includes(t)) t = "person";
   convo.type = t;
+
+  if (convo.type === "self-intelligence") {
+    convo.model = "none";
+    convo.aiSubtype = undefined;
+    convo.backend = "Neural";
+    convo.medium = "Neural";
+    convo.channel = "Neural";
+    convo.system = true;
+    return convo;
+  }
 
   if (convo.type === "ai") {
     const raw =
@@ -146,6 +184,9 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
 export function sealedChannelLabel(focus) {
   const t = getFocusType(focus);
   const ch = getSealedChannel(focus);
+  if (t === "self-intelligence") {
+    return `Cell2 · ${ch}`;
+  }
   if (t === "eternal-intelligence") {
     return `eternal-intelligence · ${ch}`;
   }
@@ -183,6 +224,73 @@ export function ensureScrollFocus(state) {
   };
   state.conversations = [focus, ...(state.conversations || [])];
   state.activeId = focus.id;
+}
+
+/**
+ * Seed Cell2 Core — app self-memory / intelligence engine.
+ * System focus (not ad-hoc user create). Idempotent.
+ */
+export function ensureCell2CoreFocus(state) {
+  if (!state) return null;
+  state.conversations = state.conversations || [];
+  let focus = state.conversations.find((c) => isCell2CoreFocus(c));
+  if (focus) {
+    focus.id = CELL2_CORE_ID;
+    focus.name = CELL2_CORE_NAME;
+    focus.type = "self-intelligence";
+    focus.system = true;
+    focus.channel = focus.channel || "Neural";
+    focus.backend = focus.backend || "Neural";
+    focus.medium = focus.medium || "Neural";
+    if (!Array.isArray(focus.neuralLog)) focus.neuralLog = [];
+    if (!Array.isArray(focus.messages)) focus.messages = [];
+    delete focus.archetype;
+    return focus;
+  }
+  const born = Date.now();
+  focus = {
+    id: CELL2_CORE_ID,
+    name: CELL2_CORE_NAME,
+    type: "self-intelligence",
+    system: true,
+    channel: "Neural",
+    medium: "Neural",
+    backend: "Neural",
+    model: "none",
+    pinned: true,
+    tags: ["cell2", "brain", "doctrine"],
+    folderId: null,
+    status: "active",
+    neuralLog: [],
+    eventLog: [],
+    messages: [
+      {
+        id: "cell2-m0",
+        role: "grimoire",
+        text:
+          "**Cell2 Core** sealed — Grimoire self-intelligence engine.\n\n" +
+          "This Focus is permanent neural substrate. Speak doctrine, interaction truths, " +
+          "or anti-regression patterns. **Cast Spell** writes to the intelligence vault " +
+          "(`[NEURAL_EVENT]` · `[DOCTRINE]` · `[REGRESSION]`) — not the generic spell queue.\n\n" +
+          "Open **BRAIN** in the header to read the append-only log.",
+        ts: born,
+        kind: "system",
+      },
+    ],
+    createdAt: born,
+    updatedAt: born,
+    lastViewedAt: born,
+  };
+  // Keep system cores near the top after SCROLL if present
+  const scrollIdx = state.conversations.findIndex((c) =>
+    /^scroll$/i.test(c.name || c.id || "")
+  );
+  if (scrollIdx >= 0) {
+    state.conversations.splice(scrollIdx + 1, 0, focus);
+  } else {
+    state.conversations = [focus, ...state.conversations];
+  }
+  return focus;
 }
 
 /** Seed focuses — each backend/medium is its own sealed Focus */
@@ -1389,6 +1497,7 @@ export function loadState() {
         // Drop layout-regression flag if present
         delete parsed.sidebarCollapsed;
         ensureScrollFocus(parsed);
+        ensureCell2CoreFocus(parsed);
         return parsed;
       }
     }
@@ -1407,6 +1516,7 @@ export function loadState() {
     focusFolders: structuredClone(DEFAULT_FOCUS_FOLDERS),
   };
   ensureScrollFocus(fresh);
+  ensureCell2CoreFocus(fresh);
   return fresh;
 }
 

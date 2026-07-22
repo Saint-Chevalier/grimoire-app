@@ -48,6 +48,10 @@ import {
   STORAGE_KEY,
   suggestFocusFolderId,
   ensureScrollFocus,
+  ensureCell2CoreFocus,
+  isCell2CoreFocus,
+  CELL2_CORE_ID,
+  CELL2_CORE_NAME,
 } from "./data.js";
 import {
   randomStarPosition,
@@ -76,6 +80,12 @@ import {
   focusFileName,
   buildFocusMarkdown,
   buildScrollList,
+  appendCell2Intelligence,
+  readCell2IntelligenceLog,
+  ensureCell2IntelligenceFile,
+  classifyCell2Kind,
+  CELL2_KINDS,
+  CELL2_INTEL_FILE,
 } from "./intelligence.js";
 import {
   computeFocusHealth,
@@ -97,6 +107,8 @@ for (const c of state.conversations || []) {
 }
 // SCROLL eternal-intelligence Focus (idempotent seed after load)
 ensureScrollFocus(state);
+// Cell2 Core — app self-intelligence engine (idempotent system seed)
+ensureCell2CoreFocus(state);
 // Focus org UI (search is ephemeral; folders + pin/tags persist via saveState)
 if (!Array.isArray(state.focusFolders) || !state.focusFolders.length) {
   state.focusFolders = structuredClone(DEFAULT_FOCUS_FOLDERS);
@@ -217,6 +229,11 @@ const els = {
   galleryBody: $("#gallery-body"),
   btnGalleryClose: $("#btn-gallery-close"),
   btnOpenGallery: $("#btn-open-gallery"),
+  btnBrain: $("#btn-brain"),
+  brainOverlay: $("#brain-overlay"),
+  brainBody: $("#brain-body"),
+  brainSub: $("#brain-sub"),
+  btnBrainClose: $("#btn-brain-close"),
   toast: $("#toast"),
 };
 
@@ -872,7 +889,9 @@ function buildFocusRow(c) {
         ? "Network"
         : ft === "eternal-intelligence"
           ? "eternal-intelligence"
-          : "Person";
+          : ft === "self-intelligence"
+            ? "Cell2"
+            : "Person";
   const updated = focusLastUpdated(c);
   const rel = formatRelativeTime(updated);
   const links = linkedNodeCount(c);
@@ -1202,6 +1221,11 @@ async function requestDeleteFocus(focusId) {
   const focus = state.conversations.find((c) => c.id === focusId);
   if (!focus) return;
 
+  if (isCell2CoreFocus(focus)) {
+    toast("Cell2 Core is system neural substrate — cannot purge", "");
+    return;
+  }
+
   const channel = getSealedChannel(focus);
   const label = `${focus.name} · ${channel}`;
   const ok = window.confirm(
@@ -1327,7 +1351,7 @@ function renderChat() {
   }
 
   /* archetype removed */
-  els.entityIcon.textContent = "✧";
+  els.entityIcon.textContent = isCell2CoreFocus(convo) ? "🧠" : "✧";
   els.entityName.textContent = convo.name;
   els.entityType.textContent = typeof typeLabel === "function" ? typeLabel(convo) : (convo.type || "—");
   if (els.sealedChannelValue) {
@@ -1338,7 +1362,10 @@ function renderChat() {
     els.universeStage.textContent = `${getSealedChannel(convo)} · ${snap?.stageName || "VOID"}`;
   }
   setChatControlsEnabled(true);
-  if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) {
+  if (isCell2CoreFocus(convo)) {
+    els.chatInput.placeholder =
+      "Feed Cell2 Core — doctrine, interaction truths, anti-regression… Cast Spell densens the neural log";
+  } else if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) {
     els.chatInput.placeholder = `Speak about ${convo.name} — or Cast Spell for Alignment Reveal…`;
   } else if (isAiNode(convo)) {
     els.chatInput.placeholder = `Speak about ${convo.name} — densen intel or Cast Spell…`;
@@ -2870,6 +2897,15 @@ function sendMessage(text) {
     const ingested = ingestIntelligence(convo, userText);
     stampSpellAnsweredFromIngest(convo, userText);
 
+    // Inbound receipts also densen Cell2 neural substrate
+    feedCell2FromInteraction(userText, {
+      sourceFocus: `${convo.name} · ${getSealedChannel(convo)}`,
+      preface: `Inbound densen on **${convo.name}**`,
+      kind: isHoldOrLoopReply(userText)
+        ? CELL2_KINDS.NEURAL_EVENT
+        : classifyCell2Kind(userText),
+    });
+
     persist();
     renderChat();
     renderConvoList();
@@ -2949,15 +2985,30 @@ function sendMessage(text) {
   // AI Nodes always have at least 1 spell: Alignment Reveal if missing,
   // otherwise directives from alignment profile when intent/support exists.
   // Person/Network auto-forge on clear intent or supported general context.
-  forgeAfterUserTurn(convo, userText, turn?.reply);
+  // Cell2 Core: never forge generic spells — neural log only.
+  if (!isCell2CoreFocus(convo)) {
+    forgeAfterUserTurn(convo, userText, turn?.reply);
+  }
 
   // Chrono-Ring lite: if this looks like a node/entity reply, stamp CAST cards answered
   stampSpellAnsweredFromIngest(convo, userText);
 
   // Auto-generate self-curious + user-curious ecosystem spells (Focus = nucleus)
-  autoGenerateCuriositySpells(convo, { silentToast: true });
-  // Proactive ENGAGE packets for unengaged nodes (WYFWYG — sits in spell book)
-  autoGenerateNodeEngageSpells(convo, { silentToast: true });
+  if (!isCell2CoreFocus(convo)) {
+    autoGenerateCuriositySpells(convo, { silentToast: true });
+    // Proactive ENGAGE packets for unengaged nodes (WYFWYG — sits in spell book)
+    autoGenerateNodeEngageSpells(convo, { silentToast: true });
+  }
+
+  // Every interaction densens Cell2 Core (app self-intelligence substrate)
+  feedCell2FromInteraction(userText, {
+    sourceFocus: isCell2CoreFocus(convo)
+      ? "Cell2 Core · direct"
+      : `${convo.name} · ${getSealedChannel(convo)}`,
+    preface: isCell2CoreFocus(convo)
+      ? null
+      : `Interaction on Focus **${convo.name}** (${getFocusType(convo)} · ${getSealedChannel(convo)})`,
+  });
 
   persist();
   renderChat();
@@ -2974,6 +3025,11 @@ function sendMessage(text) {
  */
 function ingestIntelligence(convo, userText) {
   if (!convo || !userText?.trim()) return null;
+  // Cell2 densens via feedCell2FromInteraction / castSpellIntoCell2 (append-only)
+  if (isCell2CoreFocus(convo)) {
+    densenConstellationFromIntel(convo, 1);
+    return { alignmentJustLocked: false, cell2: true };
+  }
   if (!isAiNode(convo)) {
     // Still log person/network notes lightly without gate
     if (userText.trim().length > 40) {
@@ -4274,8 +4330,20 @@ function grimoireReplyAiNode(convo, userText, medium) {
 
 /**
  * Person/network: generate on intent, panel-only storage.
+ * Cell2 Core: chat densens neural log; Cast Spell writes vault (no spell queue).
  */
 function grimoireReplyPersonOrNetwork(convo, userText, medium) {
+  if (isCell2CoreFocus(convo)) {
+    const kind = classifyCell2Kind(userText);
+    return {
+      reply: [
+        `**Cell2 densened** · \`[${kind}]\` noted in neural substrate.`,
+        `Hit **Cast Spell** to force an intelligence-file write (not a spell card).`,
+        `Open **BRAIN** to read the append-only log.`,
+      ].join(" "),
+    };
+  }
+
   const intent = hasSpellIntent(userText);
   const archLabel = convo.type === "ai" ? "AI node" : convo.type === "network" ? "Network" : "Focus target";
 
@@ -4524,6 +4592,7 @@ function commitSpell(convo, spell, { silentToast = false } = {}) {
 /**
  * Persist sealed Focus intelligence to vault on disk.
  * Always surfaces an activity ping; vault fail → amber folder dot.
+ * Cell2 Core always uses append-only neural path.
  */
 async function syncFocusIntelligenceFile(
   convo,
@@ -4535,7 +4604,17 @@ async function syncFocusIntelligenceFile(
   const starsAdded = opts.starsAdded || 0;
   try {
     let result;
-    if (eventType) {
+    if (isCell2CoreFocus(convo)) {
+      const kind =
+        opts.cell2Kind ||
+        (eventType && CELL2_KINDS[eventType] ? eventType : null) ||
+        classifyCell2Kind(eventContent || eventType || "");
+      result = await appendCell2Intelligence(convo, {
+        kind,
+        content: eventContent || eventType || "",
+        source: opts.source || "focus-sync",
+      });
+    } else if (eventType) {
       result = await recordFocusEvent(
         convo,
         state.spells,
@@ -4555,6 +4634,9 @@ async function syncFocusIntelligenceFile(
       const starBit =
         starsAdded > 0 ? `Constellation +${starsAdded} · ` : "";
       activityPing(`✦ ${starBit}Vault written: ${fileLabel}`);
+    } else if (result?.method === "memory" && isCell2CoreFocus(convo)) {
+      setVaultFailState(false);
+      activityPing(`✦ Cell2 neural log densened (memory · link 📁 for disk)`);
     } else if (result?.method === "no-folder") {
       setVaultFailState(true);
       activityPing(`✦ Vault not linked — click 📁 to capture ${fileLabel}`);
@@ -4569,6 +4651,155 @@ async function syncFocusIntelligenceFile(
     console.warn("Intelligence sync failed", err);
     setVaultFailState(true);
     activityPing(`✦ Vault write failed — click 📁 to re-link`);
+  }
+}
+
+/**
+ * Feed Cell2 Core neural substrate from any user interaction.
+ * Append-only; schema-classified. Does not change active Focus.
+ */
+async function feedCell2FromInteraction(userText, meta = {}) {
+  const text = String(userText || "").trim();
+  if (!text || text.length < 2) return null;
+  // Skip pure pulse dots
+  if (/^\s*\.\s*$/.test(text)) return null;
+
+  const cell2 = ensureCell2CoreFocus(state);
+  if (!cell2) return null;
+
+  const active = activeConvo();
+  const sourceFocus =
+    meta.sourceFocus ||
+    (active && !isCell2CoreFocus(active)
+      ? `${active.name} · ${getSealedChannel(active)}`
+      : isCell2CoreFocus(active)
+        ? "Cell2 Core · direct"
+        : "app");
+
+  const kind = meta.kind || classifyCell2Kind(text);
+  const body = [
+    meta.preface || null,
+    text.slice(0, 4000),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const result = await appendCell2Intelligence(cell2, {
+    kind,
+    content: body,
+    source: sourceFocus,
+  });
+  // Touch Cell2 without stealing active focus
+  cell2.updatedAt = Date.now();
+  persist();
+  return result;
+}
+
+/**
+ * Cast Spell into Cell2 Core → neural vault write only (no spell queue).
+ */
+async function castSpellIntoCell2(convo) {
+  if (!isCell2CoreFocus(convo)) return false;
+
+  const lastUser = [...(convo.messages || [])]
+    .reverse()
+    .find((m) => m.role === "user" && String(m.text || "").trim());
+  const inputText = String(els.chatInput?.value || "").trim();
+  const payload =
+    inputText ||
+    lastUser?.text ||
+    "Cast Spell densen — operator requested neural write with no new body; stamp session pulse.";
+
+  const kind = classifyCell2Kind(payload);
+  const result = await appendCell2Intelligence(convo, {
+    kind,
+    content: payload.slice(0, 6000),
+    source: "cast-spell",
+  });
+
+  if (inputText && els.chatInput) {
+    els.chatInput.value = "";
+    els.chatInput.style.height = "auto";
+  }
+
+  // Also mirror into chat as a system receipt (not a spell card)
+  convo.messages = convo.messages || [];
+  if (inputText) {
+    convo.messages.push({
+      id: uid("msg"),
+      role: "user",
+      text: inputText,
+      ts: Date.now(),
+      kind: "cell2-cast",
+    });
+  }
+  convo.messages.push({
+    id: uid("msg"),
+    role: "grimoire",
+    text: [
+      `**Cell2 neural write** · \`[${kind}]\``,
+      result?.method === "filesystem"
+        ? `Appended to vault: **${CELL2_INTEL_FILE}**`
+        : result?.method === "memory"
+          ? `Logged in memory · link 📁 Intelligence Folder to persist **${CELL2_INTEL_FILE}**`
+          : `Write status: ${result?.method || "unknown"}`,
+      "",
+      "Generic spell queue skipped — Cell2 densens intelligence only.",
+      "Open **BRAIN** to read the append-only log.",
+    ].join("\n"),
+    ts: Date.now(),
+    kind: "cell2-neural",
+  });
+  convo.updatedAt = Date.now();
+  densenConstellationFromIntel(convo, 1);
+  persist();
+  renderChat();
+  renderConvoList();
+  renderSpells();
+  if (els.brainOverlay && !els.brainOverlay.hasAttribute("hidden")) {
+    renderBrainLog();
+  }
+  toast(
+    result?.method === "filesystem"
+      ? `Cell2 · [${kind}] → ${CELL2_INTEL_FILE}`
+      : `Cell2 · [${kind}] densened`,
+    "success"
+  );
+  return true;
+}
+
+/** Open BRAIN panel — read-only Cell2 intelligence log */
+async function openBrainLog() {
+  const cell2 = ensureCell2CoreFocus(state);
+  if (els.brainOverlay) {
+    els.brainOverlay.removeAttribute("hidden");
+  }
+  await renderBrainLog(cell2);
+}
+
+function closeBrainLog() {
+  els.brainOverlay?.setAttribute("hidden", "");
+}
+
+async function renderBrainLog(focus) {
+  const cell2 = focus || ensureCell2CoreFocus(state);
+  if (!els.brainBody) return;
+  els.brainBody.innerHTML = `<p class="brain-loading">Loading neural log…</p>`;
+  try {
+    const { text, method, fileName, entries } = await readCell2IntelligenceLog(cell2);
+    if (els.brainSub) {
+      const n = Array.isArray(entries) ? entries.length : 0;
+      els.brainSub.textContent = `${fileName || CELL2_INTEL_FILE} · ${n} in-memory entries · ${method}`;
+    }
+    const pre = document.createElement("pre");
+    pre.className = "brain-log";
+    pre.textContent = text || "_empty_";
+    els.brainBody.innerHTML = "";
+    els.brainBody.appendChild(pre);
+    // Scroll to latest
+    els.brainBody.scrollTop = els.brainBody.scrollHeight;
+  } catch (err) {
+    els.brainBody.innerHTML = `<p class="brain-empty">Could not load Cell2 log: ${escapeHtml(String(err?.message || err))}</p>`;
   }
 }
 
@@ -4609,7 +4840,11 @@ async function onChooseIntelFolder() {
     activityPing(`✦ Vault linked: ${handle.name}/`);
     await refreshIntelFolderUi();
     for (const c of state.conversations) {
-      await writeFocusIntelligence(c, state.spells);
+      if (isCell2CoreFocus(c)) {
+        await ensureCell2IntelligenceFile(c);
+      } else {
+        await writeFocusIntelligence(c, state.spells);
+      }
     }
     persist();
   } catch (err) {
@@ -4633,7 +4868,11 @@ async function bootstrapIntelligenceVault() {
     await refreshIntelFolderUi();
     if (handle) {
       for (const c of state.conversations) {
-        await writeFocusIntelligence(c, state.spells);
+        if (isCell2CoreFocus(c)) {
+          await ensureCell2IntelligenceFile(c);
+        } else {
+          await writeFocusIntelligence(c, state.spells);
+        }
       }
       persist();
       if (!wasIntelligenceSetupSkipped()) {
@@ -4642,6 +4881,9 @@ async function bootstrapIntelligenceVault() {
     } else if (!wasIntelligenceSetupSkipped()) {
       // First run cancelled — status line shows how to set later
     }
+    // Always ensure Cell2 neural substrate is seeded in memory
+    const cell2 = ensureCell2CoreFocus(state);
+    if (cell2) await ensureCell2IntelligenceFile(cell2);
   } catch (err) {
     if (err?.name !== "AbortError") console.warn(err);
     await refreshIntelFolderUi();
@@ -5030,6 +5272,12 @@ function consolidateAndRestructureSpells(convo) {
 function castSpell() {
   const convo = activeConvo();
   if (!convo) return;
+
+  // Cell2 Core — Cast Spell densens neural intelligence file only (no spell queue)
+  if (isCell2CoreFocus(convo)) {
+    castSpellIntoCell2(convo);
+    return;
+  }
 
   ensureAlignmentDirective(convo);
 
@@ -5425,6 +5673,11 @@ document.addEventListener("click", (e) => {
 });
 
 els.btnCast?.addEventListener("click", castSpell);
+els.btnBrain?.addEventListener("click", () => openBrainLog());
+els.btnBrainClose?.addEventListener("click", () => closeBrainLog());
+els.brainOverlay?.addEventListener("click", (e) => {
+  if (e.target === els.brainOverlay) closeBrainLog();
+});
 
 els.btnAttach?.addEventListener("click", () => {
   const convo = activeConvo();

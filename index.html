@@ -81,6 +81,9 @@
             <span class="label">Channel</span>
             <span class="sealed-value" id="sealed-channel-value">—</span>
           </div>
+          <button type="button" class="btn-icon btn-brain" id="btn-brain" title="BRAIN — Cell2 Core neural intelligence log (read-only)" aria-label="Open Cell2 Brain log">
+            <span aria-hidden="true">BRAIN</span>
+          </button>
           <button type="button" class="btn-icon" id="btn-edit-focus" title="Edit Focus — name, type, model" aria-label="Edit Focus">
             <span aria-hidden="true">✎</span>
           </button>
@@ -261,6 +264,23 @@
       <footer class="atlas-foot">
         <span class="atlas-economy">☉ align · ★ intel · ♃ directives · ☄ spells · ✦ sent</span>
         <button type="button" class="btn-export-focus" id="btn-export-focus" title="Copy Focus dossier">Copy Focus</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Cell2 BRAIN — append-only self-intelligence log (read-only UI) -->
+  <div id="brain-overlay" class="atlas-overlay brain-overlay" hidden role="dialog" aria-label="Cell2 Brain">
+    <div class="atlas-modal brain-modal">
+      <header class="atlas-header">
+        <strong id="brain-title">🧠 Cell2 Core — BRAIN</strong>
+        <button type="button" class="atlas-close" id="btn-brain-close" title="Close" aria-label="Close Brain">×</button>
+      </header>
+      <p class="atlas-sub" id="brain-sub">Append-only neural substrate · NEURAL_EVENT · DOCTRINE · REGRESSION</p>
+      <div class="atlas-body brain-body" id="brain-body">
+        <p class="brain-empty">Loading neural log…</p>
+      </div>
+      <footer class="atlas-foot">
+        <span class="atlas-economy">read-only · write via chat / Cast Spell on Cell2 Core</span>
       </footer>
     </div>
   </div>
