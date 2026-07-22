@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=path-hard-gate-1" />
+  <link rel="stylesheet" href="css/styles.css?v=path-gate-ui-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -37,10 +37,23 @@
             <p class="brand-sub">Constellation Codex</p>
           </div>
         </div>
-        <button type="button" class="btn-intel-folder" id="btn-intel-folder" title="Choose Intelligence Folder">
-          📁
-          <span class="vault-fail-dot" id="vault-fail-dot" hidden title="Vault write failed — click to re-link folder"></span>
-        </button>
+        <div class="vault-folder-btn-wrap" id="vault-folder-btn-wrap">
+          <button type="button" class="btn-intel-folder" id="btn-intel-folder" title="Choose Intelligence Folder">
+            📁
+            <span class="vault-fail-dot" id="vault-fail-dot" hidden title="Vault write failed — click to re-link folder"></span>
+          </button>
+          <!-- Shown only when active focus is path-locked — points at 📁 -->
+          <div
+            id="vault-folder-gate-cue"
+            class="vault-folder-gate-cue"
+            hidden
+            role="status"
+            aria-live="polite"
+          >
+            <span class="vault-folder-gate-arrow" aria-hidden="true">➜</span>
+            <span class="vault-folder-gate-label">Link vault folder first</span>
+          </div>
+        </div>
       </header>
       <p class="intel-folder-status" id="intel-folder-status">Pick a folder — creates GRIMOIRE-FocusIntelligence/</p>
 
@@ -124,6 +137,24 @@
       </header>
 
       <div class="chat-area-wrapper">
+        <!-- Prominent path gate — only when active focus has no linked vault folder -->
+        <div
+          id="focus-path-lock-gate"
+          class="focus-path-lock-gate"
+          hidden
+          role="region"
+          aria-label="Vault folder required"
+        >
+          <div class="focus-path-lock-gate-card">
+            <div class="focus-path-lock-gate-icon" aria-hidden="true">📁</div>
+            <h3 class="focus-path-lock-gate-title">Before you can speak to this focus...</h3>
+            <p class="focus-path-lock-gate-lead">Click the folder icon to link a vault folder</p>
+            <p class="focus-path-lock-gate-sub">This is where this focus writes its intelligence</p>
+            <button type="button" class="btn-path-link btn-path-link-gate" id="btn-path-lock-gate-link">
+              Link vault folder
+            </button>
+          </div>
+        </div>
         <div class="chat-messages" id="chat-messages" role="log" aria-live="polite">
           <div class="empty-state" id="empty-state">
             <div class="empty-glyph">✧</div>
@@ -407,7 +438,7 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=path-hard-gate-1"></script>
+  <script type="module" src="js/app.js?v=path-gate-ui-1"></script>
   <!--
     Emergency boot (non-module): works even if app.js ES module fails to load.
     Paints focuses from localStorage + Create persists + reloads.

@@ -1731,7 +1731,6 @@ body.universe-view-active {
   color: rgba(196, 181, 253, 0.75);
 }
 .app.focus-path-locked .chat-messages {
-  /* subtle locked frame */
   box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.12);
 }
 .focus-lock-banner {
@@ -1744,9 +1743,211 @@ body.universe-view-active {
 .focus-lock-banner .btn-path-link-inline {
   margin-top: 0.65rem;
 }
+.focus-lock-banner-quiet {
+  border-style: solid;
+  border-color: rgba(167, 139, 250, 0.22);
+  background: rgba(12, 10, 22, 0.55);
+  padding: 0.65rem 1rem;
+  margin-top: 0.35rem;
+}
+.focus-lock-banner-quiet .empty-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgba(200, 195, 230, 0.78);
+}
 .convo-item.focus-needs-path .convo-name::after {
-  /* lock cue reserved — icon stays in callout / vault only when linked */
   content: none;
+}
+
+/* ── Vault folder gate cue (arrow → 📁) ── */
+.vault-folder-btn-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vault-folder-gate-cue {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  pointer-events: none;
+  max-width: 11rem;
+  text-align: right;
+}
+.vault-folder-gate-cue[hidden] {
+  display: none !important;
+}
+.vault-folder-gate-arrow {
+  display: block;
+  font-size: 1.55rem;
+  line-height: 1;
+  color: #fbbf24;
+  text-shadow:
+    0 0 8px rgba(251, 191, 36, 0.85),
+    0 0 18px rgba(167, 139, 250, 0.5);
+  transform: rotate(-90deg);
+  transform-origin: center;
+  animation: vault-gate-arrow-pulse 1.6s ease-in-out infinite;
+}
+.vault-folder-gate-label {
+  display: block;
+  padding: 0.28rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  background: rgba(28, 18, 8, 0.94);
+  color: #fde68a;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 0 12px rgba(251, 191, 36, 0.2);
+  animation: vault-gate-label-pulse 1.6s ease-in-out infinite;
+}
+@keyframes vault-gate-arrow-pulse {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: rotate(-90deg) translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: rotate(-90deg) translateY(-5px);
+  }
+}
+@keyframes vault-gate-label-pulse {
+  0%,
+  100% {
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 0 8px rgba(251, 191, 36, 0.15);
+  }
+  50% {
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 0 16px rgba(251, 191, 36, 0.4);
+  }
+}
+.app.focus-path-locked .btn-intel-folder {
+  border-color: rgba(251, 191, 36, 0.75);
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.25), 0 0 16px rgba(251, 191, 36, 0.35);
+  animation: vault-folder-btn-glow 1.6s ease-in-out infinite;
+}
+@keyframes vault-folder-btn-glow {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.2);
+  }
+}
+.app.sidebar-collapsed .vault-folder-gate-cue {
+  right: 50%;
+  transform: translateX(50%);
+  align-items: center;
+  text-align: center;
+  max-width: 5.5rem;
+}
+.app.sidebar-collapsed .vault-folder-gate-label {
+  font-size: 0.58rem;
+  padding: 0.2rem 0.3rem;
+}
+
+/* ── Center workspace lock gate (impossible to miss) ── */
+.focus-path-lock-gate {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem 1.5rem 0.5rem;
+  z-index: 4;
+  pointer-events: auto;
+}
+.focus-path-lock-gate[hidden] {
+  display: none !important;
+}
+.focus-path-lock-gate-card {
+  width: min(34rem, 100%);
+  margin: 0 auto;
+  padding: 1.75rem 1.85rem 1.65rem;
+  border-radius: 14px;
+  border: 2px solid rgba(251, 191, 36, 0.75);
+  background:
+    linear-gradient(165deg, rgba(55, 35, 8, 0.97) 0%, rgba(22, 16, 40, 0.98) 55%, rgba(12, 10, 24, 0.98) 100%);
+  box-shadow:
+    0 0 0 1px rgba(253, 230, 138, 0.15),
+    0 12px 40px rgba(0, 0, 0, 0.55),
+    0 0 28px rgba(251, 191, 36, 0.22);
+  text-align: center;
+  color: #fff7ed;
+}
+.focus-path-lock-gate-icon {
+  font-size: 2.4rem;
+  line-height: 1;
+  margin-bottom: 0.75rem;
+  filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.55));
+  animation: vault-gate-icon-pulse 2s ease-in-out infinite;
+}
+@keyframes vault-gate-icon-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.92;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+.focus-path-lock-gate-title {
+  margin: 0 0 0.65rem;
+  font-family: var(--font-display, Cinzel, serif);
+  font-size: clamp(1.15rem, 2.4vw, 1.45rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fef3c7;
+  text-shadow: 0 0 18px rgba(251, 191, 36, 0.35);
+  line-height: 1.3;
+}
+.focus-path-lock-gate-lead {
+  margin: 0 0 0.45rem;
+  font-size: clamp(1rem, 2vw, 1.15rem);
+  font-weight: 600;
+  color: #fde68a;
+  line-height: 1.4;
+}
+.focus-path-lock-gate-sub {
+  margin: 0 0 1.1rem;
+  font-size: 0.92rem;
+  color: rgba(253, 230, 138, 0.82);
+  line-height: 1.45;
+}
+.btn-path-link-gate {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.65rem 1.25rem;
+  border-radius: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.7);
+  background: rgba(251, 191, 36, 0.18);
+  color: #fef3c7;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-path-link-gate:hover {
+  background: rgba(251, 191, 36, 0.32);
+  border-color: #fbbf24;
+  box-shadow: 0 0 16px rgba(251, 191, 36, 0.35);
+  color: #fffbeb;
+}
+.app.focus-path-locked .chat-area-wrapper {
+  /* keep sidebar + other focuses fully clickable; gate is not a modal trap */
 }
 
 /* Row action strip: pin · tags · export · delete */

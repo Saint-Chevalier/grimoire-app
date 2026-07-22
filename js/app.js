@@ -60,13 +60,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=path-hard-gate-1";
+} from "./data.js?v=path-gate-ui-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=path-hard-gate-1";
+} from "./stars.js?v=path-gate-ui-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -74,7 +74,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=path-hard-gate-1";
+} from "./universe.js?v=path-gate-ui-1";
 import {
   chooseIntelligenceFolder,
   chooseFocusIntelligenceFolder,
@@ -115,12 +115,12 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=path-hard-gate-1";
+} from "./intelligence.js?v=path-gate-ui-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=path-hard-gate-1";
+} from "./health.js?v=path-gate-ui-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -292,6 +292,10 @@ const els = {
   universeViewSystemLabels: $("#universe-view-system-labels"),
   btnCloseSpells: $("#btn-close-spells"),
   btnIntelFolder: $("#btn-intel-folder"),
+  vaultFolderBtnWrap: $("#vault-folder-btn-wrap"),
+  vaultFolderGateCue: $("#vault-folder-gate-cue"),
+  focusPathLockGate: $("#focus-path-lock-gate"),
+  btnPathLockGateLink: $("#btn-path-lock-gate-link"),
   vaultFailDot: $("#vault-fail-dot"),
   intelFolderStatus: $("#intel-folder-status"),
   brandText: $("#brand-text"),
@@ -1177,6 +1181,53 @@ function refuseIfFocusLocked(convo, { silent = false } = {}) {
   return true;
 }
 
+/**
+ * Obvious path-gate chrome: arrow on 📁 + center lock card.
+ * Show only when active focus is locked. Never traps navigation.
+ */
+function updatePathGateUi(convo = activeConvo()) {
+  const locked = Boolean(convo && isFocusLocked(convo));
+  const cue = els.vaultFolderGateCue || document.getElementById("vault-folder-gate-cue");
+  const gate = els.focusPathLockGate || document.getElementById("focus-path-lock-gate");
+  const wrap = els.vaultFolderBtnWrap || document.getElementById("vault-folder-btn-wrap");
+
+  if (cue) {
+    if (locked) cue.removeAttribute("hidden");
+    else cue.setAttribute("hidden", "");
+  }
+  if (gate) {
+    if (locked) {
+      gate.removeAttribute("hidden");
+      const lead = gate.querySelector(".focus-path-lock-gate-lead");
+      if (lead) {
+        lead.textContent = "Click the folder icon to link a vault folder";
+      }
+      const title = gate.querySelector(".focus-path-lock-gate-title");
+      if (title) {
+        title.textContent = "Before you can speak to this focus...";
+      }
+      const sub = gate.querySelector(".focus-path-lock-gate-sub");
+      if (sub) {
+        sub.textContent = "This is where this focus writes its intelligence";
+      }
+    } else {
+      gate.setAttribute("hidden", "");
+    }
+  }
+  if (wrap) wrap.classList.toggle("vault-gate-active", locked);
+  if (els.app) els.app.classList.toggle("focus-path-locked", locked);
+
+  // Folder button title nudges the required action while locked
+  if (els.btnIntelFolder && locked) {
+    els.btnIntelFolder.title = "Link vault folder for this focus — required before chat / Cast Spell";
+    els.btnIntelFolder.setAttribute("aria-description", "Required: link vault folder for the active focus");
+  }
+
+  if (els.constellationPing && locked) {
+    els.constellationPing.textContent = "Link vault folder first — click 📁";
+  }
+}
+
 function buildFocusRow(c) {
   /* archetype removed */
   const pending = pendingCount(c.id);
@@ -1637,10 +1688,7 @@ function setChatControlsEnabled(enabled) {
   if (bar) {
     bar.classList.toggle("chat-locked", !enabled && !!activeConvo() && isFocusLocked(activeConvo()));
   }
-  if (els.app) {
-    const locked = !enabled && !!activeConvo() && isFocusLocked(activeConvo());
-    els.app.classList.toggle("focus-path-locked", locked);
-  }
+  // focus-path-locked class is owned by updatePathGateUi()
 }
 
 function renderChat() {
@@ -1656,6 +1704,7 @@ function renderChat() {
     if (els.spellCount) els.spellCount.textContent = "";
     if (els.spellCount) els.spellCount.dataset.count = "0";
     setChatControlsEnabled(false);
+    updatePathGateUi(null);
     if (els.chatInput) els.chatInput.placeholder = "Select a focus to begin casting spells.";
     if (els.constellationPing) els.constellationPing.textContent = "Select a focus";
     if (els.universeHudStage) els.universeHudStage.textContent = "VOID · 0% · —";
@@ -1691,38 +1740,21 @@ function renderChat() {
 
   const locked = isFocusLocked(convo);
   setChatControlsEnabled(!locked);
+  updatePathGateUi(convo);
   if (locked) {
     if (els.chatInput) {
       els.chatInput.value = "";
       els.chatInput.placeholder = "🔒 Link vault folder to unlock";
     }
-    if (els.constellationPing) {
-      els.constellationPing.textContent = "Locked — Create my path to unlock";
-    }
-    const lockBanner = document.createElement("div");
-    lockBanner.className = "empty-state focus-lock-banner";
-    lockBanner.innerHTML = `
-      <div class="empty-glyph" aria-hidden="true">🔒</div>
-      <p><strong>${escapeHtml(convo.name)}</strong> is locked.</p>
-      <p class="empty-hint">Link a vault folder via <strong>Create my path</strong> in the sidebar before chat, Cast Spell, or bus routing. BRAIN stays available (read-only).</p>
-      <button type="button" class="btn-path-link btn-path-link-inline" data-action="link-path-active">Create my path</button>
+    // Big center gate card is in #focus-path-lock-gate (HTML).
+    // Chat log stays empty-state clean so the card is impossible to miss.
+    // Prior history still readable after unlock; while locked we only show a light note.
+    const note = document.createElement("div");
+    note.className = "empty-state focus-lock-banner focus-lock-banner-quiet";
+    note.innerHTML = `
+      <p class="empty-hint"><strong>${escapeHtml(convo.name)}</strong> · chat &amp; Cast Spell unlock after the folder is linked. Other focuses stay free to select.</p>
     `;
-    lockBanner.querySelector('[data-action="link-path-active"]')?.addEventListener("click", async (e) => {
-      e.preventDefault();
-      await onChooseFocusPath(convo);
-    });
-    els.chatMessages.appendChild(lockBanner);
-    // Still show prior messages under the lock banner (read-only history)
-    const visibleMsgs = (convo.messages || []).filter((m) => {
-      if (m.kind === "focus-suggestion") return false;
-      if (m.role === "spell") return false;
-      if (m.kind === "inbound-intel") return false;
-      if (m.role === "system" || m.role === "System") return false;
-      return true;
-    });
-    for (const m of visibleMsgs) {
-      els.chatMessages.appendChild(renderMessage(m));
-    }
+    els.chatMessages.appendChild(note);
     els.chatMessages.scrollTop = 0;
     updateUniverseSystemLabels(convo);
     return;
@@ -5859,8 +5891,7 @@ async function onChooseIntelFolder() {
       }
     }
     persist();
-    renderConvoList();
-    renderChat();
+    renderAll();
   } catch (err) {
     if (err?.name === "AbortError") return;
     console.warn(err);
@@ -6804,7 +6835,27 @@ els.chatInput?.addEventListener("paste", (e) => {
 els.chatInput?.addEventListener("input", autoResizeTextarea);
 
 els.btnIntelFolder?.addEventListener("click", async () => {
+  // When active focus is locked, folder button is the required path link action
+  const active = activeConvo();
+  if (active && isFocusLocked(active)) {
+    await onChooseFocusPath(active);
+    return;
+  }
   await onChooseIntelFolder();
+});
+
+els.btnPathLockGateLink?.addEventListener("click", async (e) => {
+  e.preventDefault();
+  const active = activeConvo();
+  if (!active) {
+    toast("Select a focus first", "");
+    return;
+  }
+  if (isFocusLocked(active)) {
+    await onChooseFocusPath(active);
+  } else {
+    await onChooseIntelFolder();
+  }
 });
 
 // Complex spell little chat (spells panel) — separate from main Focus chat
