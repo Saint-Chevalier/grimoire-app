@@ -149,26 +149,32 @@ export async function chooseIntelligenceFolder() {
 }
 
 /**
- * First-load / restore: get handle or auto-prompt once.
+ * Restore vault handle from IndexedDB (no picker).
+ * Never calls showDirectoryPicker — that requires a user gesture.
+ * Pass forcePrompt: true only from an explicit click handler (📁 / Create my path).
  */
 export async function ensureIntelligenceFolder({ forcePrompt = false } = {}) {
   if (!hasDirectoryPicker()) return null;
 
   const restored = await restoreIntelligenceFolder();
-  if (restored && !forcePrompt) {
-    try {
-      await writeReadme(restored);
-    } catch {
-      /* ignore */
+  if (restored) {
+    if (!forcePrompt) {
+      try {
+        await writeReadme(restored);
+      } catch {
+        /* ignore */
+      }
+      return restored;
     }
-    return restored;
+    // forcePrompt with valid restore: still ok to re-pick if caller wants change
   }
 
-  const flag = localStorage.getItem(LS_SETUP);
-  if (!forcePrompt && flag === "skipped") return restored || null;
-  if (!forcePrompt && flag === "1" && restored) return restored;
+  // Boot / silent path: never open the OS picker (SecurityError without user gesture)
+  if (!forcePrompt) {
+    return restored || null;
+  }
 
-  // First visit, force, or lost permission while marked ready → prompt
+  // Explicit user gesture only
   try {
     return await chooseIntelligenceFolder();
   } catch (err) {
@@ -176,6 +182,11 @@ export async function ensureIntelligenceFolder({ forcePrompt = false } = {}) {
       if (!localStorage.getItem(LS_SETUP)) {
         localStorage.setItem(LS_SETUP, "skipped");
       }
+      return null;
+    }
+    // SecurityError if called without gesture — treat as not linked
+    if (err?.name === "SecurityError" || /user gesture/i.test(String(err?.message || err))) {
+      console.warn("Directory picker blocked (needs user gesture)", err);
       return null;
     }
     throw err;

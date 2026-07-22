@@ -60,13 +60,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=path-onboard-1";
+} from "./data.js?v=vault-gesture-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=path-onboard-1";
+} from "./stars.js?v=vault-gesture-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -74,7 +74,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=path-onboard-1";
+} from "./universe.js?v=vault-gesture-1";
 import {
   chooseIntelligenceFolder,
   ensureIntelligenceFolder,
@@ -110,12 +110,12 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=path-onboard-1";
+} from "./intelligence.js?v=vault-gesture-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=path-onboard-1";
+} from "./health.js?v=vault-gesture-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -5622,7 +5622,8 @@ async function onChooseIntelFolder() {
 }
 
 /**
- * Self-init: auto-prompt for parent folder, create vault, seed Focus files.
+ * Boot vault restore only — never open showDirectoryPicker here.
+ * Picker requires a user gesture (📁 icon or "Create my path").
  */
 async function bootstrapIntelligenceVault() {
   if (!hasDirectoryPicker()) {
@@ -5630,15 +5631,17 @@ async function bootstrapIntelligenceVault() {
     return;
   }
   try {
+    // forcePrompt: false → restore from IndexedDB only; no OS picker on load
     const handle = await ensureIntelligenceFolder({ forcePrompt: false });
     await refreshIntelFolderUi();
-    // Always ensure Cell2 system substrate is seeded (memory + disk when vault ready)
+
     const cell2 = ensureCell2CoreFocus(state);
     if (cell2) await ensureCell2IntelligenceFile(cell2);
+
     if (handle) {
+      // Previously linked vault restored — quiet seed, no toast spam
       for (const c of state.conversations) {
         if (isCell2CoreFocus(c)) continue;
-        // Ensure entity folder exists via a light identity stamp only if no prior intel
         if (!Array.isArray(c.intelLog) || c.intelLog.length === 0) {
           await appendEntityIntelligence(c, {
             body: `Focus sealed: **${c.name}** · ${getSealedChannel(c)} · type ${getFocusType(c)}`,
@@ -5650,15 +5653,17 @@ async function bootstrapIntelligenceVault() {
         }
       }
       await updateScrollListIndex(state.conversations, state.spells);
+      markAllFocusesVaultLinked();
       persist();
-      if (!wasIntelligenceSetupSkipped()) {
-        toast(`Intelligence vault: ${handle.name}/`, "success");
-      }
-    } else if (!wasIntelligenceSetupSkipped()) {
-      // First run cancelled — status line shows how to set later
+      renderConvoList();
     }
+    // Not linked: leave path-onboarding callouts / 📁 affordance for user click
   } catch (err) {
-    if (err?.name !== "AbortError") console.warn(err);
+    if (err?.name === "SecurityError" || /user gesture/i.test(String(err?.message || ""))) {
+      console.warn("[vault] boot restore skipped picker (needs user gesture)");
+    } else if (err?.name !== "AbortError") {
+      console.warn(err);
+    }
     await refreshIntelFolderUi();
   }
 }
