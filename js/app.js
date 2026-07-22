@@ -60,13 +60,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=per-focus-vault-1";
+} from "./data.js?v=per-focus-vault-2";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=per-focus-vault-1";
+} from "./stars.js?v=per-focus-vault-2";
 import {
   initUniverse,
   setFocusUniverse,
@@ -74,7 +74,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=per-focus-vault-1";
+} from "./universe.js?v=per-focus-vault-2";
 import {
   chooseIntelligenceFolder,
   chooseFocusIntelligenceFolder,
@@ -115,15 +115,17 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=per-focus-vault-1";
+} from "./intelligence.js?v=per-focus-vault-2";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=per-focus-vault-1";
+} from "./health.js?v=per-focus-vault-2";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
+/** One-time: grandfather focuses that predate per-focus vault onboarding */
+const PER_FOCUS_VAULT_MIGRATION_KEY = "grimoire-per-focus-vault-migrated-v1";
 
 // ─── State ───
 
@@ -133,18 +135,36 @@ for (const c of state.conversations || []) {
   if ("archetype" in c) delete c.archetype;
   ensureCertainty(c);
 }
-// Per-focus vault: restore vaultLinked flags from LS keys (never suppress via global vault)
+// Per-focus vault: restore vaultLinked from per-focus LS handles
 try {
   for (const c of state.conversations || []) {
     if (isCell2CoreFocus(c) || !c?.id) continue;
     if (typeof isFocusVaultLinked === "function" && isFocusVaultLinked(c.id)) {
       c.vaultLinked = true;
       c.needsPathOnboarding = false;
-    } else if (c.vaultLinked && !c.pathOnboardingDismissed) {
-      // Legacy: had vaultLinked from old global gate — re-enable onboarding
-      // unless user already dismissed or per-focus handle exists
-      c.vaultLinked = false;
-      if (c.needsPathOnboarding == null) c.needsPathOnboarding = true;
+    }
+  }
+} catch {
+  /* ignore */
+}
+// One-time migration: every focus present on first boot after this fix is legacy.
+// Clear onboarding so SCROLL / Wizard King / etc. never show "Create my path".
+// Only focuses created AFTER this migration get needsPathOnboarding:true (createConversation).
+try {
+  const already = localStorage.getItem(PER_FOCUS_VAULT_MIGRATION_KEY) === "1";
+  if (!already) {
+    for (const c of state.conversations || []) {
+      if (isCell2CoreFocus(c) || !c?.id) continue;
+      c.needsPathOnboarding = false;
+      c.pathOnboardingDismissed = true;
+      // Implicit vault-backed for pre-per-focus focuses (no callout pressure)
+      if (c.vaultLinked !== true) c.vaultLinked = true;
+    }
+    localStorage.setItem(PER_FOCUS_VAULT_MIGRATION_KEY, "1");
+    try {
+      saveState(state);
+    } catch {
+      /* ignore */
     }
   }
 } catch {
@@ -949,28 +969,20 @@ function isFocusPathLinked(c) {
 }
 
 /**
- * Fresh focus still needs path onboarding until THIS focus links its folder
- * or user dismisses. Global vault does NOT suppress this.
+ * Path onboarding callout ONLY for focuses created under the per-focus schema
+ * (needsPathOnboarding === true). Legacy/seed focuses never show it.
  */
 function focusNeedsPathOnboarding(c) {
   if (!c || !isVisibleFocus(c) || isCell2CoreFocus(c)) return false;
   if (c.pathOnboardingDismissed) return false;
   if (isFocusPathLinked(c)) return false;
-  // Explicit flag from createConversation, or legacy focuses with no path yet
-  if (c.needsPathOnboarding === true) return true;
-  if (c.needsPathOnboarding === false) return false;
-  // Existing focuses without a per-focus handle → show callout
-  return !isFocusPathLinked(c);
+  // Strict: only explicitly flagged new focuses
+  return c.needsPathOnboarding === true;
 }
 
 /** Subtle glow while path onboarding is active. */
 function focusShowsFreshHighlight(c) {
-  if (focusNeedsPathOnboarding(c)) return true;
-  if (!c || !isVisibleFocus(c) || isCell2CoreFocus(c)) return false;
-  if (c.pathOnboardingDismissed || isFocusPathLinked(c)) return false;
-  if (c.needsPathOnboarding !== true) return false;
-  const age = Date.now() - Number(c.createdAt || 0);
-  return age >= 0 && age < 60_000;
+  return focusNeedsPathOnboarding(c);
 }
 
 function focusIsVaultBacked(c) {
