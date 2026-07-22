@@ -7181,8 +7181,8 @@ function markSent(id, { fromCopy = false, fromSelfCast = false, silent = false }
   }
   if (fromSelfCast) spell.selfCastAt = now;
 
-  // If alignment was sent, nudge user to paste the reply (not for SELF-CAST inject)
-  if (isAlignmentSpell(spell) && !fromSelfCast) {
+  // If alignment was sent without a reply yet, nudge user (skip when silent / already answered)
+  if (isAlignmentSpell(spell) && !fromSelfCast && !silent && !spell.answeredAt) {
     const convo = state.conversations.find((c) => c.id === spell.conversationId);
     if (convo) {
       convo.messages.push({
@@ -7194,8 +7194,8 @@ function markSent(id, { fromCopy = false, fromSelfCast = false, silent = false }
     }
   }
 
-  // ENGAGE cast: register on SCROLL LIST + nudge paste densen
-  if (isNodeEngageSpell(spell) && !fromSelfCast) {
+  // ENGAGE cast: register on SCROLL LIST + nudge paste densen (not when reply already sealed)
+  if (isNodeEngageSpell(spell) && !fromSelfCast && !silent && !spell.answeredAt) {
     const convo = state.conversations.find((c) => c.id === spell.conversationId);
     if (convo) {
       registerEngageOnScrollList(convo, spell);
@@ -7206,6 +7206,9 @@ function markSent(id, { fromCopy = false, fromSelfCast = false, silent = false }
         ts: now,
       });
     }
+  } else if (isNodeEngageSpell(spell) && !fromSelfCast) {
+    const convo = state.conversations.find((c) => c.id === spell.conversationId);
+    if (convo) registerEngageOnScrollList(convo, spell);
   }
 
   persist();
