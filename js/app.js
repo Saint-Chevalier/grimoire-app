@@ -80,7 +80,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=spell-face-1";
+} from "./universe.js?v=spell-detail-1";
 import {
   chooseIntelligenceFolder,
   chooseFocusIntelligenceFolder,
@@ -124,12 +124,12 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=spell-face-1";
+} from "./intelligence.js?v=spell-detail-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=spell-face-1";
+} from "./health.js?v=spell-detail-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
