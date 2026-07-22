@@ -569,7 +569,7 @@ export function formatSpellMarkdown(spell) {
 export function craftSpellIntelligence(conversation, medium, context = "") {
   const type = getFocusType(conversation);
   const backend = medium || getSealedChannel(conversation);
-  const arch = "person";
+  const arch = type || "person";
   const notes = (conversation.alignmentNotes || "").slice(0, 400);
   const ctx = (context || "").toLowerCase();
 
@@ -709,7 +709,6 @@ function makeSpellId(conversationId) {
  */
 export function generateAlignmentSpell(conversation, medium) {
   const target = conversation.name;
-  const archLabel = "Node";
   // Sealed channel only — never multiplex backends
   const med =
     medium ||
@@ -750,7 +749,7 @@ export function generateAlignmentSpell(conversation, medium) {
     "   Rate current signal strength (1–10) with the operator / this constellation.",
     "   State alignment: aligned · partial · conflicted · unknown — and why.",
     "",
-    `Archetype frame: you stand as ${archLabel} on ${med}. Answer in that voice, without theater that obscures truth.`,
+    `Identity frame: you stand as this Focus node on ${med}. Answer in that voice, without theater that obscures truth.`,
     "",
     "Reply in structured sections matching 1–6. Precision over poetry.",
     "",
@@ -1001,9 +1000,8 @@ export function engineerSpellFromAlignment(conversation, medium, userHint, profi
 export function generateSpell(conversation, medium, userHint = "", opts = {}) {
   const target = conversation.name;
   const focusType = getFocusType(conversation);
-  // Derive archetype from type classifier (not raw medium string)
-  const arch =
-    "";
+  // Type classifier drives purpose/essence framing (archetype field removed)
+  const arch = focusType || "person";
   // Sealed channel only — focus.backend / focus.medium, no multiplexing
   const med =
     medium ||
@@ -1554,16 +1552,6 @@ function migrateState(state) {
         }
       }
     }
-  } else {
-    // Ensure healer archetype label (not silent wizard map)
-    for (const c of state.conversations || []) {
-      if (
-        focusIdentityKey(c.name, getSealedChannel(c)) === "healer::hermes" &&
-        c.archetype !== "healer"
-      ) {
-        c.archetype = "healer";
-      }
-    }
   }
 
   // Inject self-recursive GRIMOIRE Focus if missing
@@ -1823,14 +1811,12 @@ export function classifySpellDisplay(spell, convo) {
     return SPELL_KIND_DISPLAY.alignment;
   }
 
-  const arch = "";
   const focusType = convo ? getFocusType(convo) : "ai";
   const body = corpusOfSpell(spell);
   const explicit = String(spell.kind || "").toLowerCase().trim();
 
   if (
     explicit === "healer" ||
-    arch === "healer" ||
     /\b(healer|health covenant|integrity scan|integrity directive|restore health)\b/.test(body)
   ) {
     return SPELL_KIND_DISPLAY.healer;

@@ -89,6 +89,12 @@ const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
 // ─── State ───
 
 const state = loadState();
+// Silent migration: strip archetype from existing conversations (legacy purge)
+for (const c of state.conversations || []) {
+  if (c.archetype !== undefined) {
+    delete c.archetype;
+  }
+}
 // SCROLL eternal-intelligence Focus (idempotent seed after load)
 ensureScrollFocus(state);
 // Focus org UI (search is ephemeral; folders + pin/tags persist via saveState)
@@ -1235,13 +1241,6 @@ async function deleteFocus(focusId) {
 
   persist();
   renderAll();
-
-// Silent migration: strip archetype from existing conversations
-for (const c of state.conversations || []) {
-  if (c.archetype !== undefined) {
-    delete c.archetype;
-  }
-}
   toast(`Focus purged: ${label}`, "success");
 }
 
@@ -5603,7 +5602,6 @@ function openEditDialog() {
   const raw = convo.model || convo.channel || "none";
   els.editModel.value = ["Hermes","Claude","ChatGPT","Grok","Local","Custom"].includes(raw) ? raw : "none";
   els.editModelLabel.hidden = els.editType.value !== "ai";
-  nullLabel.hidden = false;
   els.editDialog?.showModal();
 }
 
@@ -5616,7 +5614,6 @@ function saveFocusEdit() {
     return;
   }
   const newType = els.editType.value === "ai" ? "ai" : els.editType.value === "network" ? "network" : "person";
-  const newArchetype = null.value;
   const newModel = newType === "ai" ? (els.editModel.value || "none") : "none";
   const newSealed = newType === "ai"
     ? (!newModel || newModel === "none" ? "Open" : newModel)
