@@ -3424,34 +3424,128 @@ function showNewFocusModal(opts = {}) {
   openNewFocusModal(opts);
 }
 
+/** Resolve New Focus dialog nodes live (never trust a stale els cache). */
+function getNewFocusDialogEls() {
+  const dialog =
+    document.getElementById("new-convo-dialog") || els.dialog || null;
+  const newName =
+    document.getElementById("new-entity-name") || els.newName || null;
+  const newType =
+    document.getElementById("new-entity-type") || els.newType || null;
+  const newModel =
+    document.getElementById("new-entity-model") || els.newModel || null;
+  const newModelLabel =
+    document.getElementById("new-model-label") || els.newModelLabel || null;
+  const newFocusHint =
+    document.getElementById("new-focus-hint") || els.newFocusHint || null;
+  // Keep els in sync for other callers
+  if (dialog) els.dialog = dialog;
+  if (newName) els.newName = newName;
+  if (newType) els.newType = newType;
+  if (newModel) els.newModel = newModel;
+  if (newModelLabel) els.newModelLabel = newModelLabel;
+  if (newFocusHint) els.newFocusHint = newFocusHint;
+  return { dialog, newName, newType, newModel, newModelLabel, newFocusHint };
+}
+
 /** Manual only: "+ New Focus" in sidebar. No mid-chat auto-discovery. */
-window.__openNewFocusModal = openNewFocusModal;
 function openNewFocusModal({ name, type, model } = {}) {
-  if (!els.dialog || !els.newName) {
-    console.warn("New Focus dialog missing from DOM");
+  const {
+    dialog,
+    newName,
+    newType,
+    newModel,
+    newModelLabel,
+    newFocusHint,
+  } = getNewFocusDialogEls();
+
+  if (!dialog || !newName) {
+    console.warn("New Focus dialog missing from DOM", {
+      dialog: !!dialog,
+      newName: !!newName,
+    });
+    try {
+      toast("New Focus dialog missing — reload the page", "error");
+    } catch {
+      /* ignore */
+    }
     return;
   }
 
-  els.newName.value = name || "";
+  newName.value = name || "";
 
   const t = type || "person";
-
-  if (els.newType) els.newType.value = t;
-  if (els.newModel) {
+  if (newType) newType.value = t;
+  if (newModel) {
     const m = model && model !== "Open" ? model : "none";
-    els.newModel.value = m;
+    newModel.value = m;
   }
-  syncNewFocusFormChrome();
+
+  // Inline chrome sync (avoid depending on els.* only)
+  const isAi = (newType?.value || t) === "ai";
+  if (newModelLabel) newModelLabel.hidden = !isAi;
+  if (newFocusHint) {
+    const hints = {
+      person:
+        "Person: densen who they are and craft message-spells for real life. Medium is open — Discord, text, in-person, anything.",
+      place:
+        "Place: anchor a location and its intelligence. Speak about this site, its history, and its secrets.",
+      thing:
+        "Thing: object, system, artifact, or tool. Track its behavior, upgrades, and role in your world.",
+      ai: "AI: densen this node and craft curated words-as-magic. Model is optional — Hermes, Grok, Claude, Custom, or open.",
+      idea: "Idea: concept, philosophy, or framework. Build it into doctrine, spawn spells, and test it against reality.",
+    };
+    newFocusHint.textContent = hints[newType?.value || t] || hints.person;
+  } else {
+    try {
+      syncNewFocusFormChrome();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Open modal — showModal preferred; fall back if already open / non-modal
+  try {
+    if (typeof dialog.close === "function" && dialog.open) {
+      try {
+        dialog.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  dialog.removeAttribute("hidden");
+  let opened = false;
+  try {
+    if (typeof dialog.showModal === "function") {
+      dialog.showModal();
+      opened = true;
+    }
+  } catch (err) {
+    console.warn("[NewFocus] showModal failed, falling back", err);
+  }
+  if (!opened) {
+    try {
+      if (typeof dialog.show === "function") dialog.show();
+      else dialog.setAttribute("open", "");
+      opened = true;
+    } catch (err2) {
+      dialog.setAttribute("open", "");
+      opened = true;
+      console.warn("[NewFocus] show() failed, used open attribute", err2);
+    }
+  }
 
   try {
-    els.dialog.showModal();
-  } catch (err) {
-    if (typeof els.dialog.show === "function") els.dialog.show();
-    else els.dialog.setAttribute("open", "");
+    newName.focus();
+    newName.select();
+  } catch {
+    /* ignore */
   }
-  els.newName.focus();
-  els.newName.select();
 }
+window.__openNewFocusModal = openNewFocusModal;
 
 /** Show optional Model only for AI; person medium stays open by design. */
 function syncNewFocusFormChrome() {
@@ -5777,64 +5871,62 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// "+ New Focus" — always available; also handle clicks even if DOM re-queries
+// "+ New Focus" — always available; re-bind safe; live DOM open
+function onNewFocusButtonClick(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  try {
+    openNewFocusModal({ name: "", type: "person" });
+  } catch (err) {
+    console.error("[NewFocus] open threw", err);
+    // Last-ditch: force open attribute on dialog
+    try {
+      const d = document.getElementById("new-convo-dialog");
+      if (d) {
+        d.removeAttribute("hidden");
+        d.setAttribute("open", "");
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 function bindNewFocusButton() {
   const btn = document.getElementById("btn-new-convo") || els.btnNew;
-  if (!btn || btn.dataset.boundNewFocus === "1") return;
-  btn.dataset.boundNewFocus = "1";
+  if (!btn) {
+    console.warn("[NewFocus] #btn-new-convo missing at bind time");
+    return;
+  }
+  els.btnNew = btn;
   btn.style.position = "relative";
   btn.style.zIndex = "50";
   btn.style.pointerEvents = "auto";
-  btn.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-    console.log("[NewFocus] click handler fired");
-    try {
-      openNewFocusModal({ name: "", type: "person", channel: "Discord" });
-      console.log("[NewFocus] openNewFocusModal returned without throwing");
-    } catch (err) {
-      console.error("[NewFocus] openNewFocusModal threw", err);
-    }
-    // Always attempt visible open regardless of try/catch outcome
-    requestAnimationFrame(() => {
-      console.log("[NewFocus] post-RAF dialog state", {
-        dialogExists: !!els.dialog,
-        dialogTag: els.dialog?.tagName,
-        dialogOpen: els.dialog?.open,
-        dialogHasAttrOpen: els.dialog?.hasAttribute?.("open"),
-      });
-      try {
-        if (!els.dialog) return;
-        if (typeof els.dialog.showModal === "function") {
-          els.dialog.showModal();
-          console.log("[NewFocus] used showModal()");
-        } else if (typeof els.dialog.show === "function") {
-          els.dialog.show();
-          console.log("[NewFocus] used show()");
-        } else {
-          els.dialog.setAttribute("open", "");
-          console.log("[NewFocus] used setAttribute(open)");
-        }
-      } catch (err) {
-        console.error("[NewFocus] post-RAF open failed", err);
-      }
-    });
-  });
+  // Idempotent: remove prior handler then re-attach
+  btn.removeEventListener("click", onNewFocusButtonClick);
+  btn.addEventListener("click", onNewFocusButtonClick);
+  btn.dataset.boundNewFocus = "1";
 }
 bindNewFocusButton();
-// Safety net: delegated click in case of dynamic re-render issues
-document.addEventListener("click", (e) => {
-  const btn = e.target?.closest?.("#btn-new-convo");
-  if (!btn) return;
-  // only if direct listener somehow mis-bound
-  if (btn.dataset.boundNewFocus !== "1") {
-    e.preventDefault();
-    try {
-      showNewFocusModal({ name: "", type: "person", channel: "Discord" });
-    } catch {}
-  }
-}, true);
+// Capture-phase safety net — always open (works even if direct bind was lost)
+document.addEventListener(
+  "click",
+  (e) => {
+    const btn = e.target?.closest?.("#btn-new-convo");
+    if (!btn) return;
+    // If direct bind is missing, open here; if present, direct handler also runs
+    if (btn.dataset.boundNewFocus !== "1") {
+      bindNewFocusButton();
+      onNewFocusButtonClick(e);
+    }
+  },
+  true
+);
+// Re-bind after boot paint in case DOM was late
+if (typeof requestAnimationFrame === "function") {
+  requestAnimationFrame(() => bindNewFocusButton());
+}
+setTimeout(() => bindNewFocusButton(), 0);
 
 els.btnClearAll?.addEventListener("click", () => {
   requestClearAllSpells();

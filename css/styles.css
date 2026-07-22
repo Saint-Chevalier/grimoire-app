@@ -3446,6 +3446,14 @@ body.universe-view-active .message.system {
 
 /* ─── Modal ─── */
 
+/* Native <dialog>: force closed/open display so custom styles never leave it inert */
+dialog.modal:not([open]) {
+  display: none;
+}
+dialog.modal[open] {
+  display: block;
+}
+
 .modal {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
