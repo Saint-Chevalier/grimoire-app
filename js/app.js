@@ -5634,7 +5634,6 @@ function saveFocusEdit() {
 
   convo.name = newName;
   convo.type = newType;
-  "person" = newArchetype;
   convo.model = newModel;
   if (newType !== "ai") convo.model = "none";
 
