@@ -3485,11 +3485,15 @@ body.universe-view-active .message.system {
 #new-model-label[hidden] {
   display: none !important;
 }
-#btn-cancel-new {
+#btn-cancel-new,
+#btn-create-focus {
   cursor: pointer;
   pointer-events: auto !important;
   position: relative;
   z-index: 2;
+}
+#btn-create-focus {
+  min-width: 5.5rem;
 }
 
 /* Legacy edit / other modals still use <dialog class="modal"> */

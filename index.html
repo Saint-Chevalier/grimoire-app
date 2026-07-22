@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=new-focus-overlay-1" />
+  <link rel="stylesheet" href="css/styles.css?v=new-focus-create-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -251,7 +251,14 @@
           >
             Cancel
           </button>
-          <button type="button" class="btn-primary" id="btn-create-focus">Create</button>
+          <button
+            type="button"
+            class="btn-primary"
+            id="btn-create-focus"
+            onclick="event.preventDefault();event.stopPropagation();if(window.__submitNewFocusForm){window.__submitNewFocusForm(event);}else if(window.__grimoireCreateFocus){window.__grimoireCreateFocus(event);}return false;"
+          >
+            Create
+          </button>
         </div>
       </form>
     </div>
@@ -391,8 +398,8 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=new-focus-overlay-1"></script>
-  <!-- Early stubs: open/close work even before the module finishes loading -->
+  <script type="module" src="js/app.js?v=new-focus-create-1"></script>
+  <!-- Early stubs: open/close/create work even before the module finishes loading -->
   <script>
     window.__closeNewFocusModal = window.__closeNewFocusModal || function (e) {
       if (e && e.preventDefault) e.preventDefault();
@@ -428,6 +435,30 @@
       var n = document.getElementById("new-entity-name");
       if (n) { try { n.focus(); } catch (_) {} }
     };
+    // Create stub — module overwrites with full submitNewFocusForm
+    window.__submitNewFocusForm = window.__submitNewFocusForm || function (e) {
+      if (e && e.preventDefault) e.preventDefault();
+      if (window.__createConversation) {
+        var name = (document.getElementById("new-entity-name") || {}).value || "";
+        name = String(name).trim();
+        if (!name) { alert("Focus name required"); return false; }
+        var type = (document.getElementById("new-entity-type") || {}).value || "person";
+        var modelEl = document.getElementById("new-entity-model");
+        var model = type === "ai" ? ((modelEl && modelEl.value) || "none") : "none";
+        try {
+          window.__createConversation({ name: name, type: type, model: model });
+          window.__closeNewFocusModal && window.__closeNewFocusModal();
+          return true;
+        } catch (err) {
+          console.error(err);
+          alert("Create failed: " + (err && err.message ? err.message : err));
+          return false;
+        }
+      }
+      alert("App still loading — wait a second and click Create again");
+      return false;
+    };
+    window.__grimoireCreateFocus = window.__submitNewFocusForm;
   </script>
 </body>
 </html>

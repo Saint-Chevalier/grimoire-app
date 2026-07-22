@@ -5804,7 +5804,13 @@ function createConversation({ name, type, model } = {}) {
 }
 window.__createConversation = createConversation;
 
-/** Submit New Focus form — live DOM, never depends on stale els */
+/** Guard against double-submit from capture + onclick + form */
+let _newFocusCreating = false;
+
+/**
+ * Submit New Focus — only path for Create.
+ * Reads live DOM. Closes overlay only on success.
+ */
 function submitNewFocusForm(e) {
   if (e) {
     try {
@@ -5814,36 +5820,59 @@ function submitNewFocusForm(e) {
       /* ignore */
     }
   }
-  const { dialog, newName, newType, newModel } = getNewFocusDialogEls();
-  const name = (
-    newName?.value ||
-    document.getElementById("new-entity-name")?.value ||
-    ""
-  ).trim();
-  if (!name) {
-    toast("Focus name required", "");
+  if (_newFocusCreating) return false;
+  _newFocusCreating = true;
+  try {
+    // Always live-query — never trust stale els
+    const nameEl = document.getElementById("new-entity-name");
+    const typeEl = document.getElementById("new-entity-type");
+    const modelEl = document.getElementById("new-entity-model");
+    const name = String(nameEl?.value || "").trim();
+    if (!name) {
+      toast("Focus name required", "");
+      try {
+        nameEl?.focus();
+      } catch {
+        /* ignore */
+      }
+      return false;
+    }
+    const type = String(typeEl?.value || "person").toLowerCase() || "person";
+    const model =
+      type === "ai" ? String(modelEl?.value || "none") || "none" : "none";
+
+    console.log("[NewFocus] create submit", { name, type, model });
+    const created = createConversation({ name, type, model });
+    if (created) {
+      closeNewFocusModal();
+      // Force sidebar paint in case renderAll was partially swallowed
+      try {
+        renderConvoList();
+        renderChat();
+      } catch (err) {
+        console.warn("[NewFocus] post-create render", err);
+      }
+      return true;
+    }
+    // Failed — leave modal open so user can fix name / retry
+    console.warn("[NewFocus] create returned null — modal stays open");
+    return false;
+  } catch (err) {
+    console.error("[NewFocus] submitNewFocusForm crashed", err);
     try {
-      (newName || document.getElementById("new-entity-name"))?.focus();
+      toast(`Create failed: ${err?.message || err}`, "error");
     } catch {
       /* ignore */
     }
     return false;
+  } finally {
+    setTimeout(() => {
+      _newFocusCreating = false;
+    }, 400);
   }
-  const type =
-    newType?.value ||
-    document.getElementById("new-entity-type")?.value ||
-    "person";
-  const model =
-    type === "ai"
-      ? newModel?.value ||
-        document.getElementById("new-entity-model")?.value ||
-        "none"
-      : "none";
-  const created = createConversation({ name, type, model });
-  closeNewFocusModal();
-  return Boolean(created);
 }
 window.__submitNewFocusForm = submitNewFocusForm;
+window.__grimoireCreateFocus = submitNewFocusForm;
 
 // ─── Events ───
 
@@ -6098,13 +6127,55 @@ function bindNewFocusForm() {
   form.removeEventListener("submit", submitNewFocusForm);
   form.addEventListener("submit", submitNewFocusForm);
   form.dataset.boundNewFocusForm = "1";
+
   const createBtn = document.getElementById("btn-create-focus");
   if (createBtn) {
     createBtn.type = "button";
-    createBtn.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      submitNewFocusForm(e);
+    createBtn.disabled = false;
+    createBtn.removeAttribute("disabled");
+    createBtn.style.pointerEvents = "auto";
+    createBtn.style.cursor = "pointer";
+    // Primary: click
+    createBtn.onclick = function (ev) {
+      try {
+        ev.preventDefault();
+        ev.stopPropagation();
+      } catch {
+        /* ignore */
+      }
+      return submitNewFocusForm(ev);
+    };
+    // Backup: some browsers drop click under overlays — mousedown also works
+    createBtn.onmousedown = function (ev) {
+      if (ev.button !== 0) return;
+      // Don't preventDefault on mousedown (kills focus); just schedule create
+      // only if click might not fire — use a short arm
+      createBtn.dataset._armed = "1";
+      setTimeout(() => {
+        if (createBtn.dataset._armed === "1") {
+          delete createBtn.dataset._armed;
+          // click usually clears this; if still armed, click was swallowed
+        }
+      }, 50);
+    };
+    createBtn.addEventListener(
+      "click",
+      function (ev) {
+        delete createBtn.dataset._armed;
+        submitNewFocusForm(ev);
+      },
+      { capture: true }
+    );
+  }
+
+  // Enter in name field creates
+  const nameEl = document.getElementById("new-entity-name");
+  if (nameEl) {
+    nameEl.onkeydown = function (ev) {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        submitNewFocusForm(ev);
+      }
     };
   }
 }
@@ -6133,7 +6204,7 @@ function bindNewFocusAll() {
 }
 bindNewFocusAll();
 
-// Capture phase: Cancel first, then + New Focus open
+// Capture phase: Cancel / Create / open New Focus
 document.addEventListener(
   "click",
   (e) => {
@@ -6142,9 +6213,9 @@ document.addEventListener(
       closeNewFocusModal(e);
       return;
     }
-    // Create button (type=button now)
     const createBtn = e.target?.closest?.("#btn-create-focus");
     if (createBtn) {
+      // Single create path (debounced inside submitNewFocusForm)
       submitNewFocusForm(e);
       return;
     }
