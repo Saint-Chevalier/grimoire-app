@@ -891,20 +891,190 @@ export function hasSpellIntent(text) {
 }
 
 /**
- * Format a spell into the canonical copy-paste block.
+ * Infer catalog tags from spell body/kind (doctrine, alignment, curiosity, …).
+ */
+export function inferSpellTags(spell) {
+  const tags = new Set();
+  const kind = String(spell?.kind || "").toLowerCase();
+  const body = [
+    spell?.purpose,
+    spell?.title,
+    spell?.essence,
+    spell?.subtitle,
+    spell?.message,
+    spell?.content,
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+
+  if (kind === "alignment" || /alignment\s*reveal|transparency/.test(body)) tags.add("alignment");
+  if (kind === "healer" || /\bhealer\b|integrity|decay|health/.test(body)) tags.add("audit");
+  if (kind === "self-check" || /\baudit\b|verify|checklist/.test(body)) tags.add("audit");
+  if (kind === "self-cast" || /self-?cast|grimoire_/.test(body)) tags.add("self");
+  if (kind === "propagate" || kind === "message" || /broadcast|network|message/.test(body)) {
+    tags.add(kind === "message" ? "message" : "engage");
+  }
+  if (/curiosity|ecosystem|linked node/.test(body)) tags.add("curiosity");
+  if (/doctrine|eternal|law|covenant/.test(body)) tags.add("doctrine");
+  if (/engage|proactive/.test(body)) tags.add("engage");
+  if (/report|scan|read of/.test(body)) tags.add("report");
+  if (!tags.size) tags.add(kind === "standard" || !kind ? "directive" : kind);
+  return [...tags].slice(0, 6);
+}
+
+/**
+ * Normalize spell to face + content model.
+ * Face: title, subtitle, target, iteration, status, tags
+ * Content: content (or message) — the copy/send payload
+ * Versions: iteration history for refine/repeat
+ */
+export function normalizeSpell(spell) {
+  if (!spell || typeof spell !== "object") return spell;
+
+  // Content = what gets copied/sent
+  if (!spell.content && spell.message) spell.content = spell.message;
+  if (!spell.message && spell.content) spell.message = spell.content;
+
+  // Face title / subtitle (purpose/essence remain for legacy callers)
+  if (!spell.title) spell.title = String(spell.purpose || "Untitled spell").trim() || "Untitled spell";
+  if (!spell.purpose) spell.purpose = spell.title;
+  if (!spell.subtitle) {
+    spell.subtitle = String(spell.essence || spell.crafted || "").trim().slice(0, 180);
+  }
+  if (!spell.essence && spell.subtitle) spell.essence = spell.subtitle;
+
+  // Target
+  if (!spell.target) spell.target = "Focus";
+
+  // Iteration / version
+  let iter = Number(spell.iteration || spell.version || 0);
+  if (!Number.isFinite(iter) || iter < 1) iter = 1;
+  spell.iteration = Math.floor(iter);
+  spell.version = spell.iteration;
+
+  // Status: draft | ready | history | archived (map legacy sent → history)
+  const st = String(spell.status || "ready").toLowerCase();
+  if (st === "sent" || st === "casting" || st === "cast") {
+    spell.status = "history";
+  } else if (st === "archived") {
+    spell.status = "archived";
+  } else if (st === "draft") {
+    spell.status = "draft";
+  } else if (spell.sentAt || spell.answeredAt || spell.selfCastAt || spell.copiedAt) {
+    // Lifecycle stamps without status heal → history
+    if (st !== "ready" && st !== "draft") spell.status = "history";
+    else if (st === "ready" && (spell.sentAt || spell.copiedAt) && !spell.rebuilt) {
+      // leave active ready only if refilled; sealed stamps handled by app heal
+      spell.status = "ready";
+    } else {
+      spell.status = st === "ready" ? "ready" : "history";
+    }
+  } else {
+    spell.status = st === "ready" || st === "draft" ? st : "ready";
+  }
+
+  // Tags
+  if (!Array.isArray(spell.tags) || !spell.tags.length) {
+    spell.tags = inferSpellTags(spell);
+  } else {
+    spell.tags = spell.tags.map((t) => String(t || "").trim().toLowerCase()).filter(Boolean).slice(0, 8);
+  }
+
+  // Version history
+  if (!Array.isArray(spell.versions)) {
+    spell.versions = [
+      {
+        version: spell.iteration,
+        content: String(spell.content || spell.message || ""),
+        title: spell.title,
+        createdAt: spell.createdAt || Date.now(),
+        note: "original",
+      },
+    ];
+  }
+
+  // Library flag: reusable across focuses (default false for focus-scoped)
+  if (typeof spell.inLibrary !== "boolean") {
+    spell.inLibrary = true; // all spells catalogued; Active filters by focus + status
+  }
+
+  return spell;
+}
+
+/** Human status label for card face */
+export function spellStatusLabel(spell) {
+  const st = String(spell?.status || "ready").toLowerCase();
+  if (st === "history" || st === "sent") return "Cast History";
+  if (st === "archived") return "Archived";
+  if (st === "draft") return "Draft";
+  return "Ready";
+}
+
+/** Face title helper */
+export function spellFaceTitle(spell) {
+  return String(spell?.title || spell?.purpose || "Untitled spell").trim() || "Untitled spell";
+}
+
+/**
+ * Push a refined version of spell content (repeat/refine).
+ * Bumps iteration, snapshots content into versions[].
+ */
+export function refineSpellVersion(spell, { content, title, subtitle, note } = {}) {
+  if (!spell) return spell;
+  normalizeSpell(spell);
+  const nextContent = content != null ? String(content) : String(spell.content || spell.message || "");
+  const nextTitle = title != null ? String(title).trim() : spell.title;
+  const nextSub = subtitle != null ? String(subtitle).trim() : spell.subtitle;
+  spell.iteration = (Number(spell.iteration) || 1) + 1;
+  spell.version = spell.iteration;
+  spell.content = nextContent;
+  spell.message = nextContent;
+  if (nextTitle) {
+    spell.title = nextTitle;
+    spell.purpose = nextTitle;
+  }
+  if (nextSub != null) {
+    spell.subtitle = nextSub;
+    spell.essence = nextSub;
+  }
+  spell.versions = Array.isArray(spell.versions) ? spell.versions : [];
+  spell.versions.push({
+    version: spell.iteration,
+    content: nextContent,
+    title: spell.title,
+    createdAt: Date.now(),
+    note: note || `refined v${spell.iteration}`,
+  });
+  // Refined spell returns to active/ready queue
+  spell.status = "ready";
+  spell.sentAt = undefined;
+  spell.copiedAt = undefined;
+  spell.answeredAt = undefined;
+  spell.selfCastAt = undefined;
+  spell.rebuilt = true;
+  spell.rebuiltAt = Date.now();
+  return spell;
+}
+
+/**
+ * Format a spell into the canonical copy-paste block (CONTENT, not face chrome).
  */
 export function formatSpellMarkdown(spell) {
+  const s = spell || {};
+  const title = spellFaceTitle(s);
+  const target = s.target || "Focus";
+  const body = String(s.content || s.message || "").trim();
   const lines = [
-    `# SPELL — ${spell.target.toUpperCase()}: ${spell.purpose}`,
-    `**To:** ${spell.target}`,
-    `**Medium:** ${spell.medium}`,
-    `**From:** ${spell.from}`,
-    `**Essence:** ${spell.essence}`,
-  ];
-  if (spell.crafted) {
-    lines.push(`**Crafted:** ${spell.crafted}`);
-  }
-  lines.push(`**Message:**`, spell.message);
+    `# SPELL — ${String(target).toUpperCase()}: ${title}`,
+    `**To:** ${target}`,
+    s.medium ? `**Channel:** ${s.medium}` : null,
+    s.from ? `**From:** ${s.from}` : null,
+    s.subtitle || s.essence ? `**Intent:** ${s.subtitle || s.essence}` : null,
+    s.iteration ? `**Version:** v${s.iteration}` : null,
+  ].filter(Boolean);
+  if (s.crafted) lines.push(`**Crafted:** ${s.crafted}`);
+  lines.push("", body || "(empty spell content)");
   return lines.join("\n");
 }
 
@@ -1102,20 +1272,26 @@ export function generateAlignmentSpell(conversation, medium) {
     "— Operator",
   ].join("\n");
 
-  return {
+  return normalizeSpell({
     id: makeSpellId(conversation.id),
     conversationId: conversation.id,
     target,
+    title: ALIGNMENT_PURPOSE,
     purpose: ALIGNMENT_PURPOSE,
+    subtitle: `Force full operational transparency from ${target} on sealed channel ${med}.`,
+    essence: `Force full operational transparency from ${target} on sealed channel ${med}.`,
     medium: med,
     from: "Operator",
-    essence: `Force full operational transparency from ${target} on sealed channel ${med}.`,
     crafted: craft.crafted || `Crafted for ${med} — transparency protocol`,
     message,
+    content: message,
     status: "ready",
+    iteration: 1,
     createdAt: Date.now(),
     kind: "alignment",
-  };
+    tags: ["alignment", "doctrine"],
+    inLibrary: true,
+  });
 }
 
 /**
@@ -1378,23 +1554,28 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
   // AI + unlocked alignment → full engineered spell (not a receipt)
   if (focusType === "ai" && unlocked && profile) {
     const eng = engineerSpellFromAlignment(conversation, med, context, profile);
-    const draft = {
+    const draft = normalizeSpell({
       id: makeSpellId(conversation.id),
       conversationId: conversation.id,
       target,
+      title: eng.purpose,
       purpose: eng.purpose,
+      subtitle: eng.essence,
+      essence: eng.essence,
       medium: med,
       from: "Operator",
-      essence: eng.essence,
       crafted: eng.crafted,
       message: eng.message,
+      content: eng.message,
       status: "ready",
+      iteration: 1,
       createdAt: Date.now(),
       // Only self-cast when the *ask* is self-recursive — not every GRIMOIRE Focus spell
       kind: "directive",
       engineeredFromAlignment: true,
       alignmentDirectives: profile.directives || [],
-    };
+      inLibrary: true,
+    });
     if (spellLooksSelfRecursive(draft)) {
       draft.kind = "self-cast";
     } else {
@@ -1404,6 +1585,7 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
         draft.kind = display.key;
       }
     }
+    draft.tags = inferSpellTags(draft);
     return draft;
   }
 
@@ -1435,17 +1617,21 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
     craft,
   });
 
-  const draft = {
+  const draft = normalizeSpell({
     id: makeSpellId(conversation.id),
     conversationId: conversation.id,
     target,
+    title: purpose,
     purpose,
+    subtitle: essence,
+    essence,
     medium: med,
     from: "Operator",
-    essence,
     crafted: craft.crafted,
     message,
+    content: message,
     status: "ready",
+    iteration: 1,
     createdAt: Date.now(),
     kind:
       focusType === "person"
@@ -1454,7 +1640,8 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
           ? "propagate"
           : "standard",
     engineeredFromAlignment: aligned && unlocked,
-  };
+    inLibrary: true,
+  });
   if (spellLooksSelfRecursive(draft)) {
     draft.kind = "self-cast";
   } else {
@@ -1464,6 +1651,7 @@ export function generateSpell(conversation, medium, userHint = "", opts = {}) {
     }
   }
   if (draft.kind === "standard") draft.kind = "directive";
+  draft.tags = inferSpellTags(draft);
   return draft;
 }
 
@@ -1729,11 +1917,15 @@ export function loadState() {
         if (typeof parsed.spellsOpen !== "boolean") {
           parsed.spellsOpen = true;
         }
-        if (parsed.spellView !== "history") {
+        if (parsed.spellView !== "history" && parsed.spellView !== "library") {
           parsed.spellView = "active";
         }
         // Drop layout-regression flag if present
         delete parsed.sidebarCollapsed;
+        // Spell face/content model migration
+        if (Array.isArray(parsed.spells)) {
+          parsed.spells = parsed.spells.map((s) => normalizeSpell(s));
+        }
         ensureScrollFocus(parsed);
         ensureCell2CoreFocus(parsed);
         return parsed;
@@ -1747,7 +1939,7 @@ export function loadState() {
   );
   const fresh = {
     conversations,
-    spells: structuredClone(SEED_SPELLS),
+    spells: structuredClone(SEED_SPELLS).map((s) => normalizeSpell(s)),
     activeId: null,
     spellsOpen: true,
     spellView: "active",
@@ -2323,7 +2515,12 @@ export function saveState(state) {
         spells: state.spells,
         activeId: state.activeId,
         spellsOpen: state.spellsOpen,
-        spellView: state.spellView === "history" ? "history" : "active",
+        spellView:
+          state.spellView === "history"
+            ? "history"
+            : state.spellView === "library"
+              ? "library"
+              : "active",
         focusFolders: Array.isArray(state.focusFolders)
           ? state.focusFolders
           : structuredClone(DEFAULT_FOCUS_FOLDERS),

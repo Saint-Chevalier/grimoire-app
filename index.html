@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=vault-folder-fix-1" />
+  <link rel="stylesheet" href="css/styles.css?v=spell-face-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -210,6 +210,7 @@
       </header>
       <div class="spell-view-tabs" role="tablist" aria-label="Spell views">
         <button type="button" class="spell-view-tab active" id="tab-spells-active" data-view="active" role="tab" aria-selected="true">Active</button>
+        <button type="button" class="spell-view-tab" id="tab-spells-library" data-view="library" role="tab" aria-selected="false">Library</button>
         <button type="button" class="spell-view-tab" id="tab-spells-history" data-view="history" role="tab" aria-selected="false">Cast History</button>
       </div>
       <p class="spells-hint" id="spells-hint">Tap a spell card to copy (seals the cast). Paste the reply into chat to densen, then Cast Spell for the next true priority.</p>
