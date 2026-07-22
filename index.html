@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=new-focus-cancel-1" />
+  <link rel="stylesheet" href="css/styles.css?v=new-focus-overlay-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -201,52 +201,61 @@
     </div>
   </dialog>
 
-  <!-- New Focus modal — never method=dialog (that closes without create if JS is late) -->
-  <dialog id="new-convo-dialog" class="modal new-focus-dialog" aria-labelledby="new-focus-title">
-    <form id="new-convo-form" class="modal-form" action="javascript:void(0)" autocomplete="off">
-      <h2 id="new-focus-title">New Focus</h2>
-      <label>
-        Focus target name
-        <input type="text" id="new-entity-name" name="focus-name" required placeholder="e.g. Grok, Dragon, Healer" autocomplete="off" />
-      </label>
-      <label>
-        Type
-        <select id="new-entity-type" name="focus-type">
-          <option value="person">Person</option>
-          <option value="place">Place</option>
-          <option value="thing">Thing</option>
-          <option value="ai">AI</option>
-          <option value="idea">Idea</option>
-        </select>
-      </label>
-      <label id="new-model-label">
-        Model <span class="field-optional">(optional)</span>
-        <select id="new-entity-model" name="focus-model">
-          <option value="none">None — open AI</option>
-          <option value="Hermes">Hermes</option>
-          <option value="Claude">Claude</option>
-          <option value="ChatGPT">ChatGPT</option>
-          <option value="Grok">Grok</option>
-          <option value="Local">Local</option>
-          <option value="Custom">Custom</option>
-        </select>
-      </label>
-      <p class="modal-hint" id="new-focus-hint">
-        Person: densen who they are and craft message-spells for real life. Medium is open — Discord, text, in-person, anything.
-      </p>
-      <div class="modal-actions">
-        <button
-          type="button"
-          class="btn-secondary"
-          id="btn-cancel-new"
-          onclick="window.__closeNewFocusModal&&window.__closeNewFocusModal(event);return false;"
-        >
-          Cancel
-        </button>
-        <button type="submit" class="btn-primary" id="btn-create-focus">Create</button>
-      </div>
-    </form>
-  </dialog>
+  <!-- New Focus: plain overlay (NOT <dialog>) so Cancel is just hide — no showModal fights -->
+  <div
+    id="new-convo-dialog"
+    class="new-focus-overlay"
+    hidden
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="new-focus-title"
+  >
+    <div class="new-focus-panel" role="document">
+      <form id="new-convo-form" class="modal-form" autocomplete="off" onsubmit="return false;">
+        <h2 id="new-focus-title">New Focus</h2>
+        <label>
+          Focus target name
+          <input type="text" id="new-entity-name" name="focus-name" required placeholder="e.g. Grok, Dragon, Healer" autocomplete="off" />
+        </label>
+        <label>
+          Type
+          <select id="new-entity-type" name="focus-type">
+            <option value="person">Person</option>
+            <option value="place">Place</option>
+            <option value="thing">Thing</option>
+            <option value="ai">AI</option>
+            <option value="idea">Idea</option>
+          </select>
+        </label>
+        <label id="new-model-label" hidden>
+          Model <span class="field-optional">(optional)</span>
+          <select id="new-entity-model" name="focus-model">
+            <option value="none">None — open AI</option>
+            <option value="Hermes">Hermes</option>
+            <option value="Claude">Claude</option>
+            <option value="ChatGPT">ChatGPT</option>
+            <option value="Grok">Grok</option>
+            <option value="Local">Local</option>
+            <option value="Custom">Custom</option>
+          </select>
+        </label>
+        <p class="modal-hint" id="new-focus-hint">
+          Person: densen who they are and craft message-spells for real life. Medium is open — Discord, text, in-person, anything.
+        </p>
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn-secondary"
+            id="btn-cancel-new"
+            onclick="event.preventDefault();event.stopPropagation();if(window.__closeNewFocusModal){window.__closeNewFocusModal(event);}return false;"
+          >
+            Cancel
+          </button>
+          <button type="button" class="btn-primary" id="btn-create-focus">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- Universe view chrome — only when chat is hidden; system labels live here -->
   <div id="universe-view-chrome" class="universe-view-chrome" hidden>
@@ -382,9 +391,26 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=new-focus-cancel-1"></script>
-  <!-- Early global stub so HTML onclick works even before module finishes evaluating -->
+  <script type="module" src="js/app.js?v=new-focus-overlay-1"></script>
+  <!-- Early stubs: open/close work even before the module finishes loading -->
   <script>
+    window.__closeNewFocusModal = window.__closeNewFocusModal || function (e) {
+      if (e && e.preventDefault) e.preventDefault();
+      if (e && e.stopPropagation) e.stopPropagation();
+      var d = document.getElementById("new-convo-dialog");
+      if (!d) return false;
+      d.setAttribute("hidden", "");
+      d.classList.remove("is-open");
+      d.setAttribute("aria-hidden", "true");
+      try {
+        d.style.cssText = "";
+        d.style.setProperty("display", "none", "important");
+      } catch (_) {}
+      var f = document.getElementById("new-convo-form");
+      try { if (f) f.reset(); } catch (_) {}
+      return true;
+    };
+    window.__grimoireCloseNewFocus = window.__closeNewFocusModal;
     window.__grimoireOpenNewFocus = window.__grimoireOpenNewFocus || function (e) {
       if (e && e.preventDefault) e.preventDefault();
       if (window.__openNewFocusModal) {
@@ -392,7 +418,13 @@
       }
       var d = document.getElementById("new-convo-dialog");
       if (!d) return;
-      try { if (d.showModal) d.showModal(); else d.setAttribute("open", ""); } catch (err2) { d.setAttribute("open", ""); }
+      d.removeAttribute("hidden");
+      d.classList.add("is-open");
+      d.setAttribute("aria-hidden", "false");
+      try {
+        d.style.removeProperty("display");
+        d.style.setProperty("display", "flex", "important");
+      } catch (_) {}
       var n = document.getElementById("new-entity-name");
       if (n) { try { n.focus(); } catch (_) {} }
     };

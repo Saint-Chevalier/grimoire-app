@@ -3447,24 +3447,52 @@ body.universe-view-active .message.system {
 
 /* ─── Modal ─── */
 
-/* Native <dialog>: force closed/open display so custom styles never leave it inert */
-dialog.modal:not([open]),
-dialog.modal[hidden],
-dialog.new-focus-dialog:not([open]),
-dialog.new-focus-dialog[hidden] {
-  display: none !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
+/* ─── New Focus overlay (div, not <dialog>) — Cancel = hide, period ─── */
+.new-focus-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(3, 4, 12, 0.78);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
 }
-dialog.modal[open]:not([hidden]),
-dialog.modal.new-focus-dialog[open]:not([hidden]) {
-  display: block !important;
-  visibility: visible !important;
-  opacity: 1 !important;
+.new-focus-overlay[hidden] {
+  display: none !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+.new-focus-overlay.is-open,
+.new-focus-overlay:not([hidden]) {
+  display: flex !important;
   pointer-events: auto !important;
-  z-index: 10000 !important;
+  visibility: visible !important;
+}
+.new-focus-panel {
+  width: min(420px, calc(100vw - 2rem));
+  max-height: min(90vh, 640px);
+  overflow: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-panel-solid);
+  color: var(--text);
+  box-shadow: var(--shadow), 0 0 40px rgba(167, 139, 250, 0.14);
+  pointer-events: auto;
+}
+#new-model-label[hidden] {
+  display: none !important;
+}
+#btn-cancel-new {
+  cursor: pointer;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 2;
 }
 
+/* Legacy edit / other modals still use <dialog class="modal"> */
 .modal {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);

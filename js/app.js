@@ -3448,9 +3448,21 @@ function getNewFocusDialogEls() {
   return { dialog, newName, newType, newModel, newModelLabel, newFocusHint };
 }
 
+/** True when New Focus overlay is showing */
+function isNewFocusOpen() {
+  const dialog =
+    document.getElementById("new-convo-dialog") || els.dialog || null;
+  if (!dialog) return false;
+  if (dialog.classList.contains("is-open")) return true;
+  if (!dialog.hasAttribute("hidden")) return true;
+  // legacy <dialog> support if old HTML still cached
+  if (dialog.open) return true;
+  return false;
+}
+
 /**
- * Hard-close New Focus modal — clears open attr AND any forced open styles.
- * Cancel / Escape / post-create all use this.
+ * Hard-close New Focus overlay. Cancel / Escape / backdrop / post-create.
+ * No native <dialog>.close() — pure hide so Cancel can never stick open.
  */
 function closeNewFocusModal(e) {
   if (e) {
@@ -3467,8 +3479,9 @@ function closeNewFocusModal(e) {
     document.getElementById("new-convo-form") || els.newForm || null;
   if (!dialog) return false;
 
+  // Legacy native dialog API if present
   try {
-    if (typeof dialog.close === "function") dialog.close();
+    if (typeof dialog.close === "function" && dialog.open) dialog.close();
   } catch {
     /* ignore */
   }
@@ -3477,21 +3490,16 @@ function closeNewFocusModal(e) {
   } catch {
     /* ignore */
   }
-  try {
-    dialog.setAttribute("hidden", "");
-  } catch {
-    /* ignore */
-  }
 
-  // Wipe forced open styles from openNewFocusModal (these were blocking Cancel)
+  dialog.classList.remove("is-open");
+  dialog.setAttribute("hidden", "");
+  dialog.setAttribute("aria-hidden", "true");
+
   try {
-    dialog.style.removeProperty("display");
-    dialog.style.removeProperty("visibility");
-    dialog.style.removeProperty("opacity");
-    dialog.style.removeProperty("z-index");
-    dialog.style.removeProperty("pointer-events");
-    // Belt-and-suspenders hide if UA still paints it
+    dialog.style.cssText = "";
     dialog.style.setProperty("display", "none", "important");
+    dialog.style.setProperty("visibility", "hidden", "important");
+    dialog.style.setProperty("pointer-events", "none", "important");
   } catch {
     try {
       dialog.style.display = "none";
@@ -3505,14 +3513,21 @@ function closeNewFocusModal(e) {
   } catch {
     /* ignore */
   }
+
+  // Restore model label default (hidden for person)
+  try {
+    const modelLabel = document.getElementById("new-model-label");
+    if (modelLabel) modelLabel.setAttribute("hidden", "");
+  } catch {
+    /* ignore */
+  }
   return true;
 }
 window.__closeNewFocusModal = closeNewFocusModal;
 window.__grimoireCloseNewFocus = closeNewFocusModal;
 
 /**
- * Open New Focus modal — bulletproof.
- * Live DOM only. Multiple open strategies. Always focuses name field.
+ * Open New Focus overlay — plain show/hide, no showModal.
  */
 function openNewFocusModal({ name, type, model } = {}) {
   const {
@@ -3534,19 +3549,8 @@ function openNewFocusModal({ name, type, model } = {}) {
     return false;
   }
 
-  // Exit universe view so sidebar/modal chrome is interactive
   try {
     if (state.universeView) setUniverseView(false, { silent: true });
-  } catch {
-    /* ignore */
-  }
-
-  // Clear any leftover hard-hide from a prior cancel
-  try {
-    dialog.style.removeProperty("display");
-    dialog.style.removeProperty("visibility");
-    dialog.style.removeProperty("opacity");
-    dialog.removeAttribute("hidden");
   } catch {
     /* ignore */
   }
@@ -3561,9 +3565,9 @@ function openNewFocusModal({ name, type, model } = {}) {
 
   const isAi = (newType?.value || t) === "ai";
   if (newModelLabel) {
-    newModelLabel.hidden = !isAi;
     if (isAi) newModelLabel.removeAttribute("hidden");
     else newModelLabel.setAttribute("hidden", "");
+    newModelLabel.hidden = !isAi;
   }
   if (newFocusHint) {
     const hints = {
@@ -3579,47 +3583,28 @@ function openNewFocusModal({ name, type, model } = {}) {
     newFocusHint.textContent = hints[newType?.value || t] || hints.person;
   }
 
-  dialog.classList.add("new-focus-dialog");
-
-  // Prefer showModal; fall back to open attribute
-  let opened = false;
+  // Show overlay
+  dialog.removeAttribute("hidden");
+  dialog.classList.add("is-open");
+  dialog.setAttribute("aria-hidden", "false");
   try {
-    if (dialog.open && typeof dialog.close === "function") {
-      try {
-        dialog.close();
-      } catch {
-        /* ignore */
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  try {
-    if (typeof dialog.showModal === "function") {
-      dialog.showModal();
-      opened = Boolean(dialog.open);
-    }
-  } catch (err) {
-    console.warn("[NewFocus] showModal failed", err);
-  }
-  if (!opened) {
-    try {
-      if (typeof dialog.show === "function") dialog.show();
-    } catch {
-      /* ignore */
-    }
-    dialog.setAttribute("open", "");
-    dialog.removeAttribute("hidden");
-    opened = true;
-  }
-
-  // Only force visibility while open — closeNewFocusModal clears these
-  if (dialog.open || dialog.hasAttribute("open")) {
-    dialog.style.setProperty("display", "block", "important");
+    dialog.style.cssText = "";
+    dialog.style.setProperty("display", "flex", "important");
     dialog.style.setProperty("visibility", "visible", "important");
     dialog.style.setProperty("opacity", "1", "important");
-    dialog.style.setProperty("z-index", "10000", "important");
     dialog.style.setProperty("pointer-events", "auto", "important");
+    dialog.style.setProperty("z-index", "10000", "important");
+  } catch {
+    dialog.style.display = "flex";
+  }
+
+  // Legacy native dialog path if someone still has old HTML
+  try {
+    if (typeof dialog.showModal === "function" && dialog.tagName === "DIALOG") {
+      if (!dialog.open) dialog.showModal();
+    }
+  } catch {
+    /* ignore — overlay styles already show it */
   }
 
   if (newName) {
@@ -3634,7 +3619,7 @@ function openNewFocusModal({ name, type, model } = {}) {
       }
     }
   }
-  return opened;
+  return true;
 }
 window.__openNewFocusModal = openNewFocusModal;
 window.__grimoireOpenNewFocus = function (e) {
@@ -6063,7 +6048,7 @@ document.addEventListener("keydown", (e) => {
     // Don't steal Esc from open modals/atlas
     if (els.universeLegend && !els.universeLegend.hasAttribute("hidden")) return;
     if (els.appSettingsPanel && !els.appSettingsPanel.hasAttribute("hidden")) return;
-    if (els.dialog?.open) return;
+    if (isNewFocusOpen()) return;
     e.preventDefault();
     setUniverseView(false);
   }
@@ -6115,8 +6100,10 @@ function bindNewFocusForm() {
   form.dataset.boundNewFocusForm = "1";
   const createBtn = document.getElementById("btn-create-focus");
   if (createBtn) {
+    createBtn.type = "button";
     createBtn.onclick = (e) => {
       e.preventDefault();
+      e.stopPropagation();
       submitNewFocusForm(e);
     };
   }
@@ -6128,49 +6115,41 @@ function bindNewFocusAll() {
   const cancel = document.getElementById("btn-cancel-new");
   if (cancel) {
     cancel.type = "button";
-    cancel.onclick = closeNewFocusModal;
+    // Direct assignment + listener — both call the same hard close
+    cancel.onclick = function (e) {
+      closeNewFocusModal(e);
+      return false;
+    };
     cancel.removeEventListener("click", closeNewFocusModal);
     cancel.addEventListener("click", closeNewFocusModal);
   }
-  const dialog = document.getElementById("new-convo-dialog");
-  if (dialog) {
-    // Esc / cancel event on <dialog>
-    dialog.removeEventListener("cancel", closeNewFocusModal);
-    dialog.addEventListener("cancel", closeNewFocusModal);
-    dialog.removeEventListener("close", onNewFocusDialogClose);
-    dialog.addEventListener("close", onNewFocusDialogClose);
-  }
-}
-function onNewFocusDialogClose() {
-  // Ensure forced styles never leave a ghost dialog after native close
-  const d = document.getElementById("new-convo-dialog");
-  if (!d || d.open) return;
-  try {
-    d.style.removeProperty("display");
-    d.style.removeProperty("visibility");
-    d.style.removeProperty("opacity");
-    d.style.removeProperty("z-index");
-    d.style.removeProperty("pointer-events");
-    d.style.setProperty("display", "none", "important");
-  } catch {
-    /* ignore */
+  const overlay = document.getElementById("new-convo-dialog");
+  if (overlay) {
+    // Click dimmed backdrop (not the panel) closes
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeNewFocusModal(e);
+    });
   }
 }
 bindNewFocusAll();
 
-// Capture phase: ALWAYS open New Focus OR close via Cancel
+// Capture phase: Cancel first, then + New Focus open
 document.addEventListener(
   "click",
   (e) => {
-    // Cancel / backdrop-close path first
     const cancelBtn = e.target?.closest?.("#btn-cancel-new");
     if (cancelBtn) {
       closeNewFocusModal(e);
       return;
     }
+    // Create button (type=button now)
+    const createBtn = e.target?.closest?.("#btn-create-focus");
+    if (createBtn) {
+      submitNewFocusForm(e);
+      return;
+    }
     const btn = e.target?.closest?.("#btn-new-convo");
     if (!btn) return;
-    // Don't double-fire if the click already went through our handler this tick
     if (btn.dataset._nfOpening === "1") return;
     btn.dataset._nfOpening = "1";
     setTimeout(() => {
@@ -6188,10 +6167,7 @@ document.addEventListener(
 // Escape while New Focus is open
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  const d = document.getElementById("new-convo-dialog");
-  if (d && (d.open || d.hasAttribute("open"))) {
-    closeNewFocusModal(e);
-  }
+  if (isNewFocusOpen()) closeNewFocusModal(e);
 });
 
 // Capture phase: ALWAYS handle form submit for create
