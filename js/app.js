@@ -60,13 +60,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=cell2-2";
+} from "./data.js?v=path-onboard-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=cell2-2";
+} from "./stars.js?v=path-onboard-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -74,7 +74,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=cell2-2";
+} from "./universe.js?v=path-onboard-1";
 import {
   chooseIntelligenceFolder,
   ensureIntelligenceFolder,
@@ -110,12 +110,12 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=cell2-2";
+} from "./intelligence.js?v=path-onboard-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=cell2-2";
+} from "./health.js?v=path-onboard-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -127,6 +127,21 @@ const state = loadState();
 for (const c of state.conversations || []) {
   if ("archetype" in c) delete c.archetype;
   ensureCertainty(c);
+}
+// If vault already linked at boot, mark focuses vault-backed (no stale path callouts)
+try {
+  if (typeof isIntelligenceSetupComplete === "function" && isIntelligenceSetupComplete()) {
+    for (const c of state.conversations || []) {
+      if (isCell2CoreFocus(c)) continue;
+      c.vaultLinked = true;
+      if (c.needsPathOnboarding) {
+        c.needsPathOnboarding = false;
+        c.pathOnboardingDismissed = true;
+      }
+    }
+  }
+} catch {
+  /* isIntelligenceSetupComplete may run before full import in edge cases — ignore */
 }
 // SCROLL eternal-intelligence Focus (idempotent seed after load)
 ensureScrollFocus(state);
@@ -902,12 +917,109 @@ function renderConvoList() {
   const flat = sortFocusesForDisplay(unpinned.length ? unpinned : matched);
   console.debug("[sidebar] appending rows", flat.map((c) => c.id + "::" + c.name));
   for (const c of flat) {
-    try { els.convoList.appendChild(buildFocusRow(c)); } catch (e) { console.warn("[sidebar] row append failed", c.id, e); }
+    try {
+      els.convoList.appendChild(buildFocusRow(c));
+      // Path onboarding callout sits directly under the fresh focus row
+      if (focusNeedsPathOnboarding(c)) {
+        els.convoList.appendChild(buildPathOnboardingCallout(c));
+      }
+    } catch (e) {
+      console.warn("[sidebar] row append failed", c.id, e);
+    }
   }
   console.debug("[sidebar] render end", { rows: flat.length });
 }
 
+/** Vault is app-global; once linked, all focuses can write intelligence. */
+function isVaultLinked() {
+  try {
+    return Boolean(isIntelligenceSetupComplete());
+  } catch {
+    return false;
+  }
+}
 
+/** Fresh focus still needs path onboarding (until vault linked or dismissed). */
+function focusNeedsPathOnboarding(c) {
+  if (!c || !isVisibleFocus(c) || isCell2CoreFocus(c)) return false;
+  if (c.pathOnboardingDismissed) return false;
+  if (c.vaultLinked || isVaultLinked()) return false;
+  // Only user-created focuses that were explicitly flagged at create time
+  return c.needsPathOnboarding === true;
+}
+
+/** Subtle glow while path onboarding is active (or just-created window). */
+function focusShowsFreshHighlight(c) {
+  if (focusNeedsPathOnboarding(c)) return true;
+  if (!c || !isVisibleFocus(c) || isCell2CoreFocus(c)) return false;
+  if (c.pathOnboardingDismissed || c.vaultLinked || isVaultLinked()) return false;
+  if (c.needsPathOnboarding !== true) return false;
+  const age = Date.now() - Number(c.createdAt || 0);
+  return age >= 0 && age < 60_000;
+}
+
+function focusIsVaultBacked(c) {
+  if (!c || isCell2CoreFocus(c)) return false;
+  return Boolean(c.vaultLinked) || isVaultLinked();
+}
+
+function dismissPathOnboarding(focusId) {
+  const c = state.conversations.find((x) => x.id === focusId);
+  if (!c) return;
+  c.pathOnboardingDismissed = true;
+  c.needsPathOnboarding = false;
+  persist();
+  renderConvoList();
+}
+
+function markAllFocusesVaultLinked() {
+  for (const c of state.conversations || []) {
+    if (isCell2CoreFocus(c)) continue;
+    c.vaultLinked = true;
+    c.needsPathOnboarding = false;
+    c.pathOnboardingDismissed = true;
+  }
+}
+
+function buildPathOnboardingCallout(c) {
+  const box = document.createElement("div");
+  box.className = "focus-path-callout";
+  box.dataset.focusId = c.id;
+  box.setAttribute("role", "region");
+  box.setAttribute("aria-label", `Vault path for ${c.name}`);
+
+  box.innerHTML = `
+    <button type="button" class="focus-path-dismiss" title="Dismiss" aria-label="Dismiss path callout">×</button>
+    <div class="focus-path-callout-body">
+      <p class="focus-path-text">Link vault folder to write intelligence</p>
+      <button type="button" class="btn-path-link" data-action="link-path">Create my path</button>
+    </div>
+  `;
+
+  box.querySelector(".focus-path-dismiss")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dismissPathOnboarding(c.id);
+  });
+  box.querySelector('[data-action="link-path"]')?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    state.activeId = c.id;
+    persist();
+    await onChooseIntelFolder();
+    // If user aborted picker, keep callout
+    if (isVaultLinked()) {
+      markAllFocusesVaultLinked();
+      persist();
+      renderConvoList();
+      renderChat();
+    } else {
+      renderConvoList();
+    }
+  });
+
+  return box;
+}
 
 function buildFocusRow(c) {
   /* archetype removed */
@@ -927,21 +1039,30 @@ function buildFocusRow(c) {
   const rel = formatRelativeTime(updated);
   const links = linkedNodeCount(c);
   const tags = Array.isArray(c.tags) ? c.tags : [];
+  const fresh = focusShowsFreshHighlight(c);
+  const needsPath = focusNeedsPathOnboarding(c);
+  const vaultBacked = focusIsVaultBacked(c);
 
   const row = document.createElement("div");
   row.className =
     "convo-item" +
     (c.id === state.activeId ? " active" : "") +
-    (c.pinned ? " pinned" : "");
+    (c.pinned ? " pinned" : "") +
+    (fresh || needsPath ? " focus-fresh" : "") +
+    (needsPath ? " focus-needs-path" : "") +
+    (vaultBacked ? " focus-vault-backed" : "");
   row.setAttribute("role", "listitem");
   row.dataset.focusId = c.id;
   row.draggable = true;
+  if (needsPath) row.dataset.needsPath = "1";
 
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "convo-item-main";
   const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
-  btn.title = `${c.name} · ${channel} (sealed)${tagStr}${rel ? ` · updated ${rel}` : ""}`;
+  btn.title = `${c.name} · ${channel} (sealed)${tagStr}${rel ? ` · updated ${rel}` : ""}${
+    vaultBacked ? " · vault-backed" : needsPath ? " · link vault to write intelligence" : ""
+  }`;
 
   // Spell badge first (same truth as Active tab / top-right count).
   // Unread is a secondary dim chip so it never masquerades as ready spells.
@@ -963,12 +1084,22 @@ function buildFocusRow(c) {
         .join("")}</span>`
     : "";
 
+  const vaultIcon = vaultBacked
+    ? `<span class="convo-vault-icon" title="Vault-backed — intelligence writes to disk" aria-label="Vault-backed">📁</span>`
+    : "";
+  const freshArrow =
+    needsPath || fresh
+      ? `<span class="convo-fresh-arrow" title="New focus" aria-hidden="true">➜</span>`
+      : "";
+
   btn.innerHTML = `
     <span class="convo-icon" aria-hidden="true">✧</span>
     <span class="convo-text">
       <span class="convo-name-row">
         ${c.pinned ? `<span class="convo-pin-mark" title="Pinned" aria-hidden="true">★</span>` : ""}
+        ${freshArrow}
         <span class="convo-name">${escapeHtml(c.name)}</span>
+        ${vaultIcon}
       </span>
       <span class="convo-channel-tag">${escapeHtml(channel)}</span>
       <span class="convo-meta">
@@ -5477,7 +5608,11 @@ async function onChooseIntelFolder() {
       });
     }
     await updateScrollListIndex(state.conversations, state.spells);
+    // Clear path onboarding — vault is now available for all focuses
+    markAllFocusesVaultLinked();
     persist();
+    renderConvoList();
+    renderChat();
   } catch (err) {
     if (err?.name === "AbortError") return;
     console.warn(err);
@@ -6193,6 +6328,7 @@ function createConversation({ name, type, model } = {}) {
       /* ignore */
     }
 
+    const vaultAlready = isVaultLinked();
     const convo = {
       id,
       name: cleanName,
@@ -6208,6 +6344,10 @@ function createConversation({ name, type, model } = {}) {
       pinned: false,
       tags: [],
       folderId: null,
+      // Path onboarding: highlight + callout until vault linked or dismissed
+      needsPathOnboarding: !vaultAlready,
+      pathOnboardingDismissed: vaultAlready,
+      vaultLinked: vaultAlready,
     };
 
     applyFocusClassification(convo, {
