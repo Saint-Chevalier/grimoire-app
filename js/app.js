@@ -795,6 +795,7 @@ function sortFocusesForDisplay(list) {
   });
 }
 
+window.__renderConvoList = renderConvoList;
 function renderConvoList() {
   console.debug("[sidebar] render start", {
     convoList: !!els.convoList,
@@ -3345,6 +3346,7 @@ function showNewFocusModal(opts = {}) {
 }
 
 /** Manual only: "+ New Focus" in sidebar. No mid-chat auto-discovery. */
+window.__openNewFocusModal = openNewFocusModal;
 function openNewFocusModal({ name, type, model } = {}) {
   if (!els.dialog || !els.newName) {
     console.warn("New Focus dialog missing from DOM");
@@ -5966,3 +5968,6 @@ renderAll();
 bootstrapIntelligenceVault().finally(() => {
   if (activeConvo()) els.chatInput?.focus();
 });
+
+window.addEventListener('error', (ev) => { console.warn('[app-global] error', ev.message, ev.filename, ev.lineno); });
+window.addEventListener('unhandledrejection', (ev) => { console.warn('[app-global] unhandledrejection', ev.reason); });
