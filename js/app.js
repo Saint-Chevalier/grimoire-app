@@ -60,13 +60,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=path-gate-ui-1";
+} from "./data.js?v=focus-name-only-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=path-gate-ui-1";
+} from "./stars.js?v=focus-name-only-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -74,7 +74,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=path-gate-ui-1";
+} from "./universe.js?v=focus-name-only-1";
 import {
   chooseIntelligenceFolder,
   chooseFocusIntelligenceFolder,
@@ -115,12 +115,12 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=path-gate-ui-1";
+} from "./intelligence.js?v=focus-name-only-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=path-gate-ui-1";
+} from "./health.js?v=focus-name-only-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -1002,11 +1002,8 @@ function renderConvoList() {
   console.debug("[sidebar] appending rows", flat.map((c) => c.id + "::" + c.name));
   for (const c of flat) {
     try {
+      // Name-only rows — path gate lives in center workspace + 📁 cue, not under each focus
       els.convoList.appendChild(buildFocusRow(c));
-      // Path onboarding callout sits directly under the fresh focus row
-      if (focusNeedsPathOnboarding(c)) {
-        els.convoList.appendChild(buildPathOnboardingCallout(c));
-      }
     } catch (e) {
       console.warn("[sidebar] row append failed", c.id, e);
     }
@@ -1082,9 +1079,9 @@ function focusNeedsPathOnboarding(c) {
   return true;
 }
 
-/** Subtle glow while path onboarding is active. */
-function focusShowsFreshHighlight(c) {
-  return focusNeedsPathOnboarding(c) || isFocusLocked(c);
+/** Sidebar no longer pulses for path gate (center + 📁 handle that). */
+function focusShowsFreshHighlight(_c) {
+  return false;
 }
 
 /** Folder icon / vault-backed class — only when a real folder was linked. */
@@ -1229,50 +1226,26 @@ function updatePathGateUi(convo = activeConvo()) {
 }
 
 function buildFocusRow(c) {
-  /* archetype removed */
+  /* archetype removed — name-only sidebar; type/model/channel stay internal */
   const pending = pendingCount(c.id);
   const unread = unreadCount(c);
-  const channel = getSealedChannel(c);
-  const ft = getFocusType(c);
-  const typeTag =
-    ft === "ai"
-      ? "AI"
-      : ft === "network"
-        ? "Network"
-        : ft === "eternal-intelligence"
-          ? "eternal-intelligence"
-          : "Person";
-  const updated = focusLastUpdated(c);
-  const rel = formatRelativeTime(updated);
-  const links = linkedNodeCount(c);
-  const tags = Array.isArray(c.tags) ? c.tags : [];
-  const fresh = focusShowsFreshHighlight(c);
-  const needsPath = focusNeedsPathOnboarding(c);
-  const vaultBacked = focusIsVaultBacked(c);
 
   const row = document.createElement("div");
   row.className =
     "convo-item" +
     (c.id === state.activeId ? " active" : "") +
-    (c.pinned ? " pinned" : "") +
-    (fresh || needsPath ? " focus-fresh" : "") +
-    (needsPath ? " focus-needs-path" : "") +
-    (vaultBacked ? " focus-vault-backed" : "");
+    (c.pinned ? " pinned" : "");
   row.setAttribute("role", "listitem");
   row.dataset.focusId = c.id;
   row.draggable = true;
-  if (needsPath) row.dataset.needsPath = "1";
 
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "convo-item-main";
-  const tagStr = tags.length ? ` · ${tags.join(", ")}` : "";
-  btn.title = `${c.name} · ${channel} (sealed)${tagStr}${rel ? ` · updated ${rel}` : ""}${
-    vaultBacked ? " · vault-backed" : needsPath ? " · link vault to write intelligence" : ""
-  }`;
+  // Hover title only — never painted as row chrome
+  btn.title = String(c.name || "Focus");
 
-  // Spell badge first (same truth as Active tab / top-right count).
-  // Unread is a secondary dim chip so it never masquerades as ready spells.
+  // Spell badge first (same truth as Active tab). Unread is secondary dim chip.
   const badgeParts = [];
   if (pending > 0) {
     badgeParts.push(
@@ -1284,37 +1257,12 @@ function buildFocusRow(c) {
     );
   }
 
-  const tagsHtml = tags.length
-    ? `<span class="convo-tags">${tags
-        .slice(0, 3)
-        .map((t) => `<span class="convo-tag">${escapeHtml(t)}</span>`)
-        .join("")}</span>`
-    : "";
-
-  const vaultIcon = vaultBacked
-    ? `<span class="convo-vault-icon" title="Vault-backed — intelligence writes to disk" aria-label="Vault-backed">📁</span>`
-    : "";
-  const freshArrow =
-    needsPath || fresh
-      ? `<span class="convo-fresh-arrow" title="New focus" aria-hidden="true">➜</span>`
-      : "";
-
   btn.innerHTML = `
-    <span class="convo-icon" aria-hidden="true">✧</span>
     <span class="convo-text">
       <span class="convo-name-row">
         ${c.pinned ? `<span class="convo-pin-mark" title="Pinned" aria-hidden="true">★</span>` : ""}
-        ${freshArrow}
         <span class="convo-name">${escapeHtml(c.name)}</span>
-        ${vaultIcon}
       </span>
-      <span class="convo-channel-tag">${escapeHtml(channel)}</span>
-      <span class="convo-meta">
-        <span>${escapeHtml(typeTag)}</span>
-        ${rel ? `<span class="convo-updated" title="Last updated">${escapeHtml(rel)}</span>` : ""}
-        ${links > 0 ? `<span class="convo-links" title="Linked nodes">⬡${links}</span>` : ""}
-      </span>
-      ${tagsHtml}
     </span>
     ${badgeParts.join("")}
   `;
