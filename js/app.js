@@ -3448,7 +3448,10 @@ function getNewFocusDialogEls() {
   return { dialog, newName, newType, newModel, newModelLabel, newFocusHint };
 }
 
-/** Manual only: "+ New Focus" in sidebar. No mid-chat auto-discovery. */
+/**
+ * Open New Focus modal — bulletproof.
+ * Live DOM only. Multiple open strategies. Always focuses name field.
+ */
 function openNewFocusModal({ name, type, model } = {}) {
   const {
     dialog,
@@ -3459,21 +3462,24 @@ function openNewFocusModal({ name, type, model } = {}) {
     newFocusHint,
   } = getNewFocusDialogEls();
 
-  if (!dialog || !newName) {
-    console.warn("New Focus dialog missing from DOM", {
-      dialog: !!dialog,
-      newName: !!newName,
-    });
+  if (!dialog) {
+    console.error("[NewFocus] #new-convo-dialog missing");
     try {
-      toast("New Focus dialog missing — reload the page", "error");
+      toast("New Focus dialog missing — hard-refresh the page", "error");
     } catch {
       /* ignore */
     }
-    return;
+    return false;
   }
 
-  newName.value = name || "";
+  // Exit universe view so sidebar/modal chrome is interactive
+  try {
+    if (state.universeView) setUniverseView(false, { silent: true });
+  } catch {
+    /* ignore */
+  }
 
+  if (newName) newName.value = name || "";
   const t = type || "person";
   if (newType) newType.value = t;
   if (newModel) {
@@ -3481,7 +3487,6 @@ function openNewFocusModal({ name, type, model } = {}) {
     newModel.value = m;
   }
 
-  // Inline chrome sync (avoid depending on els.* only)
   const isAi = (newType?.value || t) === "ai";
   if (newModelLabel) newModelLabel.hidden = !isAi;
   if (newFocusHint) {
@@ -3496,17 +3501,15 @@ function openNewFocusModal({ name, type, model } = {}) {
       idea: "Idea: concept, philosophy, or framework. Build it into doctrine, spawn spells, and test it against reality.",
     };
     newFocusHint.textContent = hints[newType?.value || t] || hints.person;
-  } else {
-    try {
-      syncNewFocusFormChrome();
-    } catch {
-      /* ignore */
-    }
   }
 
-  // Open modal — showModal preferred; fall back if already open / non-modal
+  dialog.removeAttribute("hidden");
+  dialog.classList.add("new-focus-dialog");
+
+  // Prefer showModal; fall back to open attribute + forced styles
+  let opened = false;
   try {
-    if (typeof dialog.close === "function" && dialog.open) {
+    if (dialog.open && typeof dialog.close === "function") {
       try {
         dialog.close();
       } catch {
@@ -3516,36 +3519,51 @@ function openNewFocusModal({ name, type, model } = {}) {
   } catch {
     /* ignore */
   }
-  dialog.removeAttribute("hidden");
-  let opened = false;
   try {
     if (typeof dialog.showModal === "function") {
       dialog.showModal();
-      opened = true;
+      opened = Boolean(dialog.open);
     }
   } catch (err) {
-    console.warn("[NewFocus] showModal failed, falling back", err);
+    console.warn("[NewFocus] showModal failed", err);
   }
   if (!opened) {
     try {
       if (typeof dialog.show === "function") dialog.show();
-      else dialog.setAttribute("open", "");
-      opened = true;
-    } catch (err2) {
-      dialog.setAttribute("open", "");
-      opened = true;
-      console.warn("[NewFocus] show() failed, used open attribute", err2);
+    } catch {
+      /* ignore */
     }
+    dialog.setAttribute("open", "");
+    opened = true;
   }
 
-  try {
-    newName.focus();
-    newName.select();
-  } catch {
-    /* ignore */
+  // Force visibility against hostile CSS
+  dialog.style.display = "block";
+  dialog.style.visibility = "visible";
+  dialog.style.opacity = "1";
+  dialog.style.zIndex = "10000";
+  dialog.style.pointerEvents = "auto";
+
+  if (newName) {
+    try {
+      newName.focus({ preventScroll: false });
+      newName.select();
+    } catch {
+      try {
+        newName.focus();
+      } catch {
+        /* ignore */
+      }
+    }
   }
+  return opened;
 }
 window.__openNewFocusModal = openNewFocusModal;
+window.__grimoireOpenNewFocus = function (e) {
+  if (e && typeof e.preventDefault === "function") e.preventDefault();
+  if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+  return openNewFocusModal({ name: "", type: "person" });
+};
 
 /** Show optional Model only for AI; person medium stays open by design. */
 function syncNewFocusFormChrome() {
@@ -5567,100 +5585,212 @@ function markSent(id, { fromCopy = false, fromSelfCast = false, silent = false }
 }
 
 function createConversation({ name, type, model } = {}) {
-  if (!name) return;
-  const t = (type || "person");
-  if (!["person", "place", "thing", "ai", "idea"].includes(t)) return;
-  const rawModel = t === "ai" ? (model || "none") : "none";
-  const sealed = t === "ai"
-    ? (!rawModel || rawModel === "none" ? "Open" : rawModel)
-    : "Open";
-
-  // One Focus = one name + identity (model for AI, open for person)
-  if (focusExists(state.conversations, name.trim(), sealed)) {
-    toast(`Focus already exists: ${name.trim()} · ${sealed}`);
-    const existing = state.conversations.find(
-      (c) =>
-        focusIdentityKey(c.name, getSealedChannel(c)) ===
-        focusIdentityKey(name.trim(), sealed)
-    );
-    if (existing) {
-      state.activeId = existing.id;
-      persist();
-      renderAll();
+  try {
+    const cleanName = String(name || "").trim();
+    if (!cleanName) {
+      toast("Focus name required", "");
+      return null;
     }
-    return;
-  }
+    // Never allow creating the system Cell2 substrate via New Focus
+    if (
+      cleanName.toLowerCase() === "cell2 core" ||
+      cleanName.toLowerCase() === "cell2-core"
+    ) {
+      toast("Cell2 Core is system substrate — open BRAIN instead", "");
+      return null;
+    }
+    let t = String(type || "person").toLowerCase().trim();
+    if (!["person", "place", "thing", "ai", "idea"].includes(t)) t = "person";
+    const rawModel = t === "ai" ? model || "none" : "none";
+    const sealed =
+      t === "ai"
+        ? !rawModel || rawModel === "none"
+          ? "Open"
+          : rawModel
+        : "Open";
 
-  let id = makeFocusId(name.trim(), sealed);
-  if (state.conversations.some((c) => c.id === id)) {
-    id = `${id}-${Date.now().toString(36).slice(-4)}`;
-  }
+    // Dedupe only against visible focuses (system/hidden never block user names)
+    const visible = (state.conversations || []).filter((c) => isVisibleFocus(c));
+    if (focusExists(visible, cleanName, sealed)) {
+      toast(`Focus already exists: ${cleanName} · ${sealed}`);
+      const existing = visible.find(
+        (c) =>
+          focusIdentityKey(c.name, getSealedChannel(c)) ===
+          focusIdentityKey(cleanName, sealed)
+      );
+      if (existing) {
+        state.activeId = existing.id;
+        persist();
+        renderAll();
+      }
+      return existing || null;
+    }
 
-  const bornAt = Date.now();
-  const messages = [];
-  if (t === "ai") {
-    const modelLine = sealed === "Open" ? "Open model" : sealed;
-    messages.push({
-      id: uid("msg"),
-      role: "grimoire",
-      text: `AI Focus sealed: **${name.trim()}** (${modelLine}). Speak about this intelligence. Hit **Cast Spell** for Alignment Reveal — then craft words-as-magic for whatever surface you deliver on.`,
-      ts: Date.now(),
-      kind: "alignment-directive",
+    let id = makeFocusId(cleanName, sealed);
+    if ((state.conversations || []).some((c) => c.id === id)) {
+      id = `${id}-${Date.now().toString(36).slice(-4)}`;
+    }
+
+    const bornAt = Date.now();
+    const messages = [];
+    if (t === "ai") {
+      const modelLine = sealed === "Open" ? "Open model" : sealed;
+      messages.push({
+        id: uid("msg"),
+        role: "grimoire",
+        text: `AI Focus sealed: **${cleanName}** (${modelLine}). Speak about this intelligence. Hit **Cast Spell** for Alignment Reveal — then craft words-as-magic for whatever surface you deliver on.`,
+        ts: Date.now(),
+        kind: "alignment-directive",
+      });
+    } else {
+      messages.push({
+        id: uid("msg"),
+        role: "grimoire",
+        text: `${
+          t === "place"
+            ? "Place"
+            : t === "thing"
+              ? "Thing"
+              : t === "idea"
+                ? "Idea"
+                : "Person"
+        } Focus sealed: **${cleanName}**. Speak about ${
+          t === "place"
+            ? "this location"
+            : t === "thing"
+              ? "this object/system"
+              : t === "idea"
+                ? "this concept"
+                : "them"
+        } and yourself. Cast Spell crafts communication — medium is open.`,
+        ts: Date.now(),
+      });
+    }
+
+    let star = { x: 40, y: 40 };
+    try {
+      star = randomStarPosition(state.conversations) || star;
+    } catch {
+      /* ignore */
+    }
+
+    const convo = {
+      id,
+      name: cleanName,
+      type: t,
+      system: false,
+      hidden: false,
+      certainty: "unknown",
+      star,
+      messages,
+      createdAt: bornAt,
+      updatedAt: bornAt,
+      lastViewedAt: bornAt,
+      pinned: false,
+      tags: [],
+      folderId: null,
+    };
+
+    applyFocusClassification(convo, {
+      type: t,
+      model: t === "ai" ? rawModel : undefined,
     });
-  } else {
-    messages.push({
-      id: uid("msg"),
-      role: "grimoire",
-      text: `${
-        t === "place" ? "Place" : t === "thing" ? "Thing" : t === "idea" ? "Idea" : "Person"
-      } Focus sealed: **${name.trim()}**. Speak about ${
-        t === "place" ? "this location" : t === "thing" ? "this object/system" : t === "idea" ? "this concept" : "them"
-      } and yourself. Cast Spell crafts communication — medium is open.`,
-      ts: Date.now(),
-    });
+    // User-created focuses are never system/hidden
+    convo.system = false;
+    convo.hidden = false;
+    delete convo.archetype;
+    ensureFocusOrgFields(convo, { assignFolder: true });
+    ensureCertainty(convo);
+    if (convo.folderId == null) {
+      try {
+        convo.folderId = suggestFocusFolderId(convo);
+      } catch {
+        convo.folderId = null;
+      }
+    }
+
+    for (const f of state.conversations || []) {
+      f.messages = (f.messages || []).filter(
+        (m) => m.kind !== "focus-suggestion"
+      );
+    }
+
+    state.conversations = state.conversations || [];
+    state.conversations.push(convo);
+    state.activeId = convo.id;
+    persist();
+    renderAll();
+
+    const sealLabel = getSealedChannel(convo);
+    try {
+      syncFocusIntelligenceFile(
+        convo,
+        "FOCUS_CREATED",
+        `Focus sealed: ${convo.name} · ${sealLabel}`
+      );
+    } catch (err) {
+      console.warn("[NewFocus] vault write failed (focus still created)", err);
+    }
+    toast(`Focus sealed: ${convo.name} · ${sealLabel}`, "success");
+    return convo;
+  } catch (err) {
+    console.error("[NewFocus] createConversation failed", err);
+    toast(`Could not create Focus: ${err?.message || err}`, "error");
+    return null;
   }
-
-  const convo = {
-    id,
-    name: name.trim(),
-    type: t,
-    star: randomStarPosition(state.conversations),
-    messages,
-    createdAt: bornAt,
-    updatedAt: bornAt,
-    lastViewedAt: bornAt,
-    pinned: false,
-    tags: [],
-    folderId: null,
-  };
-
-  applyFocusClassification(convo, {
-    type: t,
-    model: t === "ai" ? rawModel : undefined,
-  });
-  ensureFocusOrgFields(convo, { assignFolder: true });
-  if (convo.folderId == null) {
-    convo.folderId = suggestFocusFolderId(convo);
-  }
-
-  // Strip any legacy auto-discovery suggestion messages from all focuses
-  for (const f of state.conversations) {
-    f.messages = (f.messages || []).filter((m) => m.kind !== "focus-suggestion");
-  }
-
-  state.conversations.push(convo);
-  state.activeId = convo.id;
-  persist();
-  renderAll();
-  // Auto-create Focus .md in GRIMOIRE-FocusIntelligence/
-  const sealLabel = getSealedChannel(convo);
-  syncFocusIntelligenceFile(
-    convo,
-    "FOCUS_CREATED",
-    `Focus sealed: ${convo.name} · ${sealLabel}`
-  );
-  toast(`Focus sealed: ${convo.name} · ${sealLabel}`);
 }
+window.__createConversation = createConversation;
+
+/** Submit New Focus form — live DOM, never depends on stale els */
+function submitNewFocusForm(e) {
+  if (e) {
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch {
+      /* ignore */
+    }
+  }
+  const { dialog, newName, newType, newModel } = getNewFocusDialogEls();
+  const name = (
+    newName?.value ||
+    document.getElementById("new-entity-name")?.value ||
+    ""
+  ).trim();
+  if (!name) {
+    toast("Focus name required", "");
+    try {
+      (newName || document.getElementById("new-entity-name"))?.focus();
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+  const type =
+    newType?.value ||
+    document.getElementById("new-entity-type")?.value ||
+    "person";
+  const model =
+    type === "ai"
+      ? newModel?.value ||
+        document.getElementById("new-entity-model")?.value ||
+        "none"
+      : "none";
+  const created = createConversation({ name, type, model });
+  // Close dialog only after create attempt
+  try {
+    const d = dialog || document.getElementById("new-convo-dialog");
+    if (d) {
+      if (typeof d.close === "function") d.close();
+      else d.removeAttribute("open");
+      d.style.display = "";
+    }
+  } catch {
+    /* ignore */
+  }
+  return Boolean(created);
+}
+window.__submitNewFocusForm = submitNewFocusForm;
 
 // ─── Events ───
 
@@ -5871,69 +6001,131 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// "+ New Focus" — always available; re-bind safe; live DOM open
+// ─── New Focus: unbreakable wiring (HTML onclick + capture + direct + form) ───
 function onNewFocusButtonClick(e) {
-  e.preventDefault();
-  e.stopPropagation();
+  if (e) {
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch {
+      /* ignore */
+    }
+  }
   try {
     openNewFocusModal({ name: "", type: "person" });
   } catch (err) {
     console.error("[NewFocus] open threw", err);
-    // Last-ditch: force open attribute on dialog
-    try {
-      const d = document.getElementById("new-convo-dialog");
-      if (d) {
-        d.removeAttribute("hidden");
-        d.setAttribute("open", "");
-      }
-    } catch {
-      /* ignore */
+    const d = document.getElementById("new-convo-dialog");
+    if (d) {
+      d.removeAttribute("hidden");
+      d.setAttribute("open", "");
+      d.style.display = "block";
+      d.style.zIndex = "10000";
     }
   }
 }
 
 function bindNewFocusButton() {
-  const btn = document.getElementById("btn-new-convo") || els.btnNew;
-  if (!btn) {
-    console.warn("[NewFocus] #btn-new-convo missing at bind time");
-    return;
-  }
+  const btn = document.getElementById("btn-new-convo");
+  if (!btn) return;
   els.btnNew = btn;
   btn.style.position = "relative";
-  btn.style.zIndex = "50";
+  btn.style.zIndex = "100";
   btn.style.pointerEvents = "auto";
-  // Idempotent: remove prior handler then re-attach
+  btn.style.cursor = "pointer";
   btn.removeEventListener("click", onNewFocusButtonClick);
   btn.addEventListener("click", onNewFocusButtonClick);
   btn.dataset.boundNewFocus = "1";
 }
-bindNewFocusButton();
-// Capture-phase safety net — always open (works even if direct bind was lost)
+
+function bindNewFocusForm() {
+  const form = document.getElementById("new-convo-form");
+  if (!form) return;
+  els.newForm = form;
+  form.removeEventListener("submit", submitNewFocusForm);
+  form.addEventListener("submit", submitNewFocusForm);
+  form.dataset.boundNewFocusForm = "1";
+  const createBtn = document.getElementById("btn-create-focus");
+  if (createBtn) {
+    createBtn.onclick = (e) => {
+      e.preventDefault();
+      submitNewFocusForm(e);
+    };
+  }
+}
+
+function bindNewFocusAll() {
+  bindNewFocusButton();
+  bindNewFocusForm();
+  const cancel = document.getElementById("btn-cancel-new");
+  if (cancel) {
+    cancel.onclick = (e) => {
+      e.preventDefault();
+      const d = document.getElementById("new-convo-dialog");
+      try {
+        if (d?.close) d.close();
+        else d?.removeAttribute("open");
+        if (d) d.style.display = "";
+      } catch {
+        /* ignore */
+      }
+    };
+  }
+}
+bindNewFocusAll();
+
+// Capture phase: ALWAYS open New Focus (HTML onclick may also fire — open is idempotent)
 document.addEventListener(
   "click",
   (e) => {
     const btn = e.target?.closest?.("#btn-new-convo");
     if (!btn) return;
-    // If direct bind is missing, open here; if present, direct handler also runs
-    if (btn.dataset.boundNewFocus !== "1") {
-      bindNewFocusButton();
-      onNewFocusButtonClick(e);
-    }
+    // Don't double-fire if the click already went through our handler this tick
+    if (btn.dataset._nfOpening === "1") return;
+    btn.dataset._nfOpening = "1";
+    setTimeout(() => {
+      try {
+        delete btn.dataset._nfOpening;
+      } catch {
+        /* ignore */
+      }
+    }, 300);
+    onNewFocusButtonClick(e);
   },
   true
 );
-// Re-bind after boot paint in case DOM was late
+
+// Capture phase: ALWAYS handle form submit for create
+document.addEventListener(
+  "submit",
+  (e) => {
+    const form = e.target?.closest?.("#new-convo-form") || e.target;
+    if (!form || form.id !== "new-convo-form") return;
+    submitNewFocusForm(e);
+  },
+  true
+);
+
+// Re-bind after paint / boot (covers any late DOM mutations)
 if (typeof requestAnimationFrame === "function") {
-  requestAnimationFrame(() => bindNewFocusButton());
+  requestAnimationFrame(() => bindNewFocusAll());
 }
-setTimeout(() => bindNewFocusButton(), 0);
+setTimeout(() => bindNewFocusAll(), 0);
+setTimeout(() => bindNewFocusAll(), 500);
 
 els.btnClearAll?.addEventListener("click", () => {
   requestClearAllSpells();
 });
 
 els.btnCancelNew?.addEventListener("click", () => {
-  els.dialog?.close();
+  const d = document.getElementById("new-convo-dialog") || els.dialog;
+  try {
+    if (d?.close) d.close();
+    else d?.removeAttribute("open");
+    if (d) d.style.display = "";
+  } catch {
+    /* ignore */
+  }
 });
 
 els.editDialog?.addEventListener("submit", (e) => {
@@ -6212,15 +6404,8 @@ function resetApp() {
 
 els.btnResetApp?.addEventListener("click", resetApp);
 
-els.newForm?.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const name = (els.newName?.value || "").trim();
-  if (!name) return;
-  const type = els.newType?.value || "person";
-  const model = type === "ai" ? (els.newModel?.value || "none") : "none";
-  createConversation({ name, type, model });
-  els.dialog?.close();
-});
+// New Focus form also bound in bindNewFocusAll / capture submit — keep els path too
+els.newForm?.addEventListener("submit", submitNewFocusForm);
 
 // ─── Utils ───
 

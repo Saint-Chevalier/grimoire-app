@@ -1800,8 +1800,9 @@ body.universe-view-active {
   gap: 0.4rem;
   transition: background var(--transition), color var(--transition), border-color var(--transition);
   position: relative;
-  z-index: 3;
-  pointer-events: auto;
+  z-index: 100;
+  pointer-events: auto !important;
+  cursor: pointer;
 }
 
 .btn-new-convo:hover {
@@ -3448,10 +3449,15 @@ body.universe-view-active .message.system {
 
 /* Native <dialog>: force closed/open display so custom styles never leave it inert */
 dialog.modal:not([open]) {
-  display: none;
+  display: none !important;
 }
-dialog.modal[open] {
-  display: block;
+dialog.modal[open],
+dialog.modal.new-focus-dialog[open] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  z-index: 10000 !important;
 }
 
 .modal {
@@ -3466,13 +3472,13 @@ dialog.modal[open] {
   position: fixed;
   inset: 0;
   margin: auto;
-  z-index: 100;
+  z-index: 10000;
 }
 
 .modal::backdrop {
   background: rgba(3, 4, 12, 0.72);
   backdrop-filter: blur(4px);
-  z-index: 99;
+  z-index: 9999;
 }
 
 .modal-form {

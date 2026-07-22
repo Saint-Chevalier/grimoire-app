@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=new-focus-fix-1" />
+  <link rel="stylesheet" href="css/styles.css?v=new-focus-unbreakable-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -59,8 +59,16 @@
           <span class="focus-search-count" id="focus-search-count" hidden></span>
         </div>
       </div>
-      <button type="button" class="btn-new-convo" id="btn-new-convo">
-        <span class="plus">+</span> <span class="btn-new-label">New Focus</span>
+      <button
+        type="button"
+        class="btn-new-convo"
+        id="btn-new-convo"
+        title="Create a new Focus"
+        aria-label="New Focus"
+        onclick="window.__grimoireOpenNewFocus&&window.__grimoireOpenNewFocus(event)"
+      >
+        <span class="plus" aria-hidden="true">+</span>
+        <span class="btn-new-label">New Focus</span>
       </button>
       <nav class="convo-list" id="convo-list" role="list"></nav>
     </aside>
@@ -193,17 +201,17 @@
     </div>
   </dialog>
 
-  <!-- New Focus modal -->
-  <dialog id="new-convo-dialog" class="modal">
-    <form method="dialog" id="new-convo-form" class="modal-form">
-      <h2>New Focus</h2>
+  <!-- New Focus modal — never method=dialog (that closes without create if JS is late) -->
+  <dialog id="new-convo-dialog" class="modal new-focus-dialog" aria-labelledby="new-focus-title">
+    <form id="new-convo-form" class="modal-form" action="javascript:void(0)" autocomplete="off">
+      <h2 id="new-focus-title">New Focus</h2>
       <label>
         Focus target name
-        <input type="text" id="new-entity-name" required placeholder="e.g. Grok, Dragon, Healer" autocomplete="off" />
+        <input type="text" id="new-entity-name" name="focus-name" required placeholder="e.g. Grok, Dragon, Healer" autocomplete="off" />
       </label>
       <label>
         Type
-        <select id="new-entity-type">
+        <select id="new-entity-type" name="focus-type">
           <option value="person">Person</option>
           <option value="place">Place</option>
           <option value="thing">Thing</option>
@@ -213,7 +221,7 @@
       </label>
       <label id="new-model-label">
         Model <span class="field-optional">(optional)</span>
-        <select id="new-entity-model">
+        <select id="new-entity-model" name="focus-model">
           <option value="none">None — open AI</option>
           <option value="Hermes">Hermes</option>
           <option value="Claude">Claude</option>
@@ -228,7 +236,7 @@
       </p>
       <div class="modal-actions">
         <button type="button" class="btn-secondary" id="btn-cancel-new">Cancel</button>
-        <button type="submit" class="btn-primary">Create</button>
+        <button type="submit" class="btn-primary" id="btn-create-focus">Create</button>
       </div>
     </form>
   </dialog>
@@ -367,6 +375,20 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=new-focus-fix-1"></script>
+  <script type="module" src="js/app.js?v=new-focus-unbreakable-1"></script>
+  <!-- Early global stub so HTML onclick works even before module finishes evaluating -->
+  <script>
+    window.__grimoireOpenNewFocus = window.__grimoireOpenNewFocus || function (e) {
+      if (e && e.preventDefault) e.preventDefault();
+      if (window.__openNewFocusModal) {
+        try { window.__openNewFocusModal({ name: "", type: "person" }); return; } catch (err) { console.error(err); }
+      }
+      var d = document.getElementById("new-convo-dialog");
+      if (!d) return;
+      try { if (d.showModal) d.showModal(); else d.setAttribute("open", ""); } catch (err2) { d.setAttribute("open", ""); }
+      var n = document.getElementById("new-entity-name");
+      if (n) { try { n.focus(); } catch (_) {} }
+    };
+  </script>
 </body>
 </html>
