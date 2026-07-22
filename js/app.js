@@ -45,6 +45,7 @@ import {
   spellFaceTitle,
   refineSpellVersion,
   inferSpellTags,
+  applySpellNodeContribution,
   loadState,
   makeFocusId,
   parseAlignmentIntelligence,
@@ -65,13 +66,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=spell-face-1";
+} from "./data.js?v=spell-detail-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=spell-face-1";
+} from "./stars.js?v=spell-detail-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -104,6 +105,9 @@ import {
   readEntityIntelligence,
   ensureCell2IntelligenceFile,
   updateScrollListIndex,
+  vaultEntrySourceCount,
+  calculateNodeContributions,
+  getKnownBackendProfile,
   saveEntityImage,
   classifyCell2Kind,
   entityIntelPath,
@@ -310,6 +314,14 @@ const els = {
   tabSpellsActive: $("#tab-spells-active"),
   tabSpellsLibrary: $("#tab-spells-library"),
   tabSpellsHistory: $("#tab-spells-history"),
+  spellDetailDialog: $("#spell-detail-dialog"),
+  spellDetailTitle: $("#spell-detail-title"),
+  spellDetailSub: $("#spell-detail-sub"),
+  spellDetailSide: $("#spell-detail-side"),
+  spellDetailMain: $("#spell-detail-main"),
+  btnSpellDetailClose: $("#btn-spell-detail-close"),
+  btnSpellDetailCopy: $("#btn-spell-detail-copy"),
+  btnSpellDetailCast: $("#btn-spell-detail-cast"),
   complexCraftDialog: $("#complex-craft-dialog"),
   btnComplexCraftClose: $("#btn-complex-craft-close"),
   complexCraftSub: $("#complex-craft-sub"),
@@ -684,6 +696,91 @@ function librarySpells() {
     .filter((s) => s && !isReceiptSpell(s))
     .map((s) => normalizeSpell(s))
     .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+}
+
+// ── Node contribution metrics (vault-derived, cached per focus) ──
+const contribCache = new Map(); // focusId -> { at, data }
+let spellDetailContext = null; // { spellId, sealOnCopy }
+
+function invalidateContribCache(focusId) {
+  if (focusId) contribCache.delete(focusId);
+  else contribCache.clear();
+}
+
+async function getFocusContributions(focusOrId, { force = false } = {}) {
+  const focus =
+    typeof focusOrId === "object" && focusOrId
+      ? focusOrId
+      : state.conversations.find((c) => c.id === focusOrId) || { id: focusOrId };
+  const id = focus?.id;
+  if (!id) {
+    return { rows: [], empty: true, totalCount: 0, totalBytes: 0 };
+  }
+  const hit = contribCache.get(id);
+  if (!force && hit && Date.now() - hit.at < 45_000) return hit.data;
+  try {
+    const data = await calculateNodeContributions(focus);
+    contribCache.set(id, { at: Date.now(), data });
+    return data;
+  } catch (err) {
+    console.warn("[contrib] calculate failed", err);
+    const empty = { rows: [], empty: true, totalCount: 0, totalBytes: 0 };
+    contribCache.set(id, { at: Date.now(), data: empty });
+    return empty;
+  }
+}
+
+/** Stacked bar + optional top source label for card face */
+function contribMiniHtml(breakdown, { compact = true } = {}) {
+  const rows = Array.isArray(breakdown?.rows) ? breakdown.rows : [];
+  if (!rows.length) {
+    return `<div class="spell-face-contrib"><div class="spell-face-contrib-label">No contributions yet</div><div class="contrib-bar-stack" title="0%"></div></div>`;
+  }
+  const segs = rows
+    .slice(0, 8)
+    .map(
+      (r) =>
+        `<span class="contrib-bar-seg" style="width:${Math.max(r.percent, 0.5)}%;background:${escapeAttr(
+          r.color || "#a78bfa"
+        )}" title="${escapeHtml(r.source)}: ${r.percent}%"></span>`
+    )
+    .join("");
+  const top = rows[0];
+  if (compact) {
+    return `<div class="spell-face-contrib">
+      <div class="spell-face-contrib-label" title="Intelligence contribution from vault sources">Intel mix</div>
+      <div class="contrib-bar-stack">${segs}</div>
+      <div class="spell-face-contrib-top"><span>${escapeHtml(top.source)}</span><span>${top.percent}%</span></div>
+    </div>`;
+  }
+  return contribDetailHtml(breakdown);
+}
+
+function contribDetailHtml(breakdown) {
+  const rows = Array.isArray(breakdown?.rows) ? breakdown.rows : [];
+  if (!rows.length) {
+    return `<p class="contrib-empty">No contributions yet · 0%</p>`;
+  }
+  const segs = rows
+    .map(
+      (r) =>
+        `<span class="contrib-bar-seg" style="width:${Math.max(r.percent, 0.4)}%;background:${escapeAttr(
+          r.color || "#a78bfa"
+        )}" title="${escapeHtml(r.source)}: ${r.percent}%"></span>`
+    )
+    .join("");
+  const list = rows
+    .map(
+      (r) => `<div class="contrib-row">
+      <span class="contrib-row-name" title="${escapeHtml(r.source)}">${escapeHtml(r.source)}</span>
+      <span class="contrib-row-pct">${r.percent}%</span>
+      <div class="contrib-row-track"><div class="contrib-row-fill" style="width:${r.percent}%;background:${escapeAttr(
+        r.color || "#a78bfa"
+      )}"></div></div>
+    </div>`
+    )
+    .join("");
+  return `<div class="contrib-bar-stack" style="height:10px;margin-bottom:0.55rem">${segs}</div><div class="contrib-rows">${list}</div>`;
 }
 
 /** Promote a history/library spell back to Active (repeat cast). Optionally refine. */
@@ -2070,7 +2167,7 @@ function scrollListNodeBadgesForSpell(spell, convo) {
   return chips.join("");
 }
 
-function renderSpells() {
+async function renderSpells() {
   try {
     const convo = activeConvo();
     // Self-heal FIRST so badge + Active list share one post-heal truth
@@ -2084,6 +2181,19 @@ function renderSpells() {
     const libList = librarySpells();
     const list =
       view === "history" ? histList : view === "library" ? libList : readyList;
+
+    // Vault-derived contribution metrics for this focus (cached)
+    let focusContrib = null;
+    if (convo) {
+      try {
+        focusContrib = await getFocusContributions(convo);
+        for (const s of readyList.concat(histList)) {
+          applySpellNodeContribution(s, focusContrib);
+        }
+      } catch (err) {
+        console.warn("[spells] contrib", err);
+      }
+    }
 
     // Badge = Active queue length only
     syncSpellCountBadges(convo?.id || null, readyList.length);
@@ -2113,7 +2223,7 @@ function renderSpells() {
           ? "Past casts with versions. Promote to Active to repeat · Refine bumps vN."
           : view === "library"
             ? "All spells. Promote to Active on the current focus to cast again."
-            : "Spell face = title · intent · target · version. Tap to expand content. Copy seals the cast.";
+            : "Spell face = title · intent · target · version · intel mix. Click a card for full detail.";
     }
 
     if (!convo && view !== "library") {
@@ -2166,9 +2276,8 @@ function renderSpells() {
       if (showSelf) item.dataset.selfCast = "1";
       item.setAttribute("role", "button");
       item.setAttribute("tabindex", "0");
-      item.title = "Tap to expand spell content";
+      item.title = "Click to open spell detail";
 
-      const md = formatSpellMarkdown(spell);
       const timeBits = [];
       if (spell.createdAt) timeBits.push(`forged ${formatSpellTime(spell.createdAt)}`);
       if (spell.iteration > 1) timeBits.push(`v${spell.iteration}`);
@@ -2178,36 +2287,31 @@ function renderSpells() {
       const timeLine = timeBits.length
         ? `<div class="spell-timestamps">${escapeHtml(timeBits.join(" · "))}</div>`
         : "";
-      const versionsN = Array.isArray(spell.versions) ? spell.versions.length : 1;
+
+      const owner = convo || resolveSpellFocus(spell);
+      // Library cards may belong to other focuses — use that focus's metrics when available
+      let cardContrib = focusContrib;
+      if (mode === "library" && spell.conversationId && spell.conversationId !== convo?.id) {
+        const cached = contribCache.get(spell.conversationId);
+        cardContrib = cached?.data || null;
+      }
 
       item.innerHTML = `
         <button type="button" class="delete-btn" data-action="delete" title="${isHist ? "Prune from history" : "Delete spell"}">✕</button>
-        ${spellCardFaceHtml(spell, convo || resolveSpellFocus(spell))}
-        <div class="spell-expanded-body" hidden>
-          <div class="spell-content-label">Spell content · copy payload</div>
-          <pre class="spell-full">${escapeHtml(md)}</pre>
+        ${spellCardFaceHtml(spell, owner, { contrib: cardContrib })}
+        ${timeLine}
+        <div class="spell-actions spell-actions-compact">
+          <span class="spell-tap-hint" aria-hidden="true">click for detail</span>
           ${
-            versionsN > 1
-              ? `<div class="spell-version-meta">${versionsN} version${versionsN === 1 ? "" : "s"} on file</div>`
+            shouldShowSelfCastButton(spell, owner)
+              ? `<button type="button" class="btn-spell self-cast" data-action="self-cast" title="SELF-CAST into Focus chat">SELF-CAST</button>`
               : ""
           }
-          <div class="spell-expanded-actions">
-            <button type="button" class="btn-spell edit" data-action="edit" title="Edit face &amp; content">Edit</button>
-            ${
-              isHist || mode === "library"
-                ? `<button type="button" class="btn-spell promote" data-action="promote" title="Promote to Active">To Active</button>
-                   <button type="button" class="btn-spell refine" data-action="refine" title="Refine &amp; bump version">Refine v${(Number(spell.iteration) || 1) + 1}</button>`
-                : `<button type="button" class="btn-spell update" data-action="update" title="Copy content (seals cast)">Copy &amp; Cast</button>`
-            }
-            <button type="button" class="btn-spell delete" data-action="delete" title="Delete spell">Delete</button>
-          </div>
         </div>
-        ${timeLine}
-        ${spellActionsHtml(spell, convo || resolveSpellFocus(spell), { isSent: isHist })}
       `;
       wireSpellCardActions(item, spell, {
         sealOnCopy: !isHist && mode !== "library",
-        convo: convo || resolveSpellFocus(spell),
+        convo: owner,
       });
       els.spellsList.appendChild(item);
     }
@@ -2290,7 +2394,7 @@ function spellIsNodeBridge(spell) {
  * Title · subtitle · target · iteration · status · tags.
  * No NEW / BRIDGE / READY operational badges.
  */
-function spellCardFaceHtml(spell, convo) {
+function spellCardFaceHtml(spell, convo, { contrib = null } = {}) {
   normalizeSpell(spell);
   const title = spellFaceTitle(spell);
   const subtitle = String(spell.subtitle || spell.essence || "").trim();
@@ -2304,6 +2408,11 @@ function spellCardFaceHtml(spell, convo) {
     .slice(0, 5)
     .map((t) => `<span class="spell-face-tag">${escapeHtml(t)}</span>`)
     .join("");
+  const breakdown =
+    contrib ||
+    (spell.nodeContribution?.rows
+      ? { rows: spell.nodeContribution.rows, empty: spell.nodeContribution.empty }
+      : null);
 
   return `
     <div class="spell-face">
@@ -2323,6 +2432,7 @@ function spellCardFaceHtml(spell, convo) {
         )}">${escapeHtml(status)}</span>
       </div>
       ${tagsHtml ? `<div class="spell-face-tags">${tagsHtml}</div>` : ""}
+      ${contribMiniHtml(breakdown, { compact: true })}
     </div>`;
 }
 
@@ -2432,43 +2542,11 @@ function openEditSpellDialog(_item, spell) {
 
 function wireSpellCardActions(item, spell, { sealOnCopy, convo }) {
   const deleteBtns = item.querySelectorAll('[data-action="delete"]');
-  const updateBtn = item.querySelector('[data-action="update"]');
-  const expandBtn = item.querySelector('[data-action="expand"]');
-  const editBtn = item.querySelector('[data-action="edit"]');
-  const promoteBtn = item.querySelector('[data-action="promote"]');
-  const refineBtn = item.querySelector('[data-action="refine"]');
   deleteBtns.forEach((deleteBtn) => {
     deleteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       requestDeleteSpell(spell.id, e.currentTarget);
     });
-  });
-  editBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    openEditSpellDialog(item, spell);
-  });
-  promoteBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    promoteSpellToActive(spell.id, { refine: false });
-  });
-  refineBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    promoteSpellToActive(spell.id, { refine: true });
-  });
-  updateBtn?.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    await copySpell(spell.id, { seal: sealOnCopy });
-    item.classList.remove("expanded");
-    const expandedBody = item.querySelector(".spell-expanded-body");
-    if (expandedBody) expandedBody.hidden = true;
-    toast("Spell content copied. Paste into target.", "success");
-  });
-  expandBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const expandedBody = item.querySelector(".spell-expanded-body");
-    const isNowExpanded = expandedBody && !expandedBody.hidden;
-    if (expandedBody) expandedBody.hidden = isNowExpanded;
-    if (expandBtn) expandBtn.textContent = isNowExpanded ? "Content" : "Hide";
   });
   item.querySelectorAll('[data-action="self-cast"]').forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -2477,23 +2555,223 @@ function wireSpellCardActions(item, spell, { sealOnCopy, convo }) {
     });
   });
 
-  const doExpand = (event) => {
-    if (event?.target?.closest?.("button, a, input, textarea, .spell-actions")) return;
-    const expandedBody = item.querySelector(".spell-expanded-body");
-    if (!expandedBody) return;
-    const showing = !expandedBody.hidden;
-    expandedBody.hidden = showing;
-    if (expandBtn) expandBtn.textContent = showing ? "Content" : "Hide";
+  const openDetail = (event) => {
+    if (event?.target?.closest?.("button, a, input, textarea")) return;
+    void openSpellDetailModal(spell, { sealOnCopy, convo });
   };
 
-  item.addEventListener("click", doExpand);
+  item.addEventListener("click", openDetail);
   item.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {
       if (e.target.closest("button")) return;
       e.preventDefault();
-      void doExpand();
+      openDetail(e);
     }
   });
+}
+
+/**
+ * Spell detail modal — full content, directions, target node, metrics, versions.
+ */
+async function openSpellDetailModal(spell, { sealOnCopy = true, convo = null } = {}) {
+  if (!spell || !els.spellDetailDialog) return;
+  normalizeSpell(spell);
+  const focus = resolveSpellFocus(spell, convo || activeConvo());
+  spellDetailContext = { spellId: spell.id, sealOnCopy: Boolean(sealOnCopy) };
+
+  // Metrics for the focus that owns the intelligence (usually active focus)
+  const metricFocus = activeConvo() || focus;
+  let contrib = { rows: [], empty: true };
+  try {
+    contrib = await getFocusContributions(metricFocus, { force: false });
+    applySpellNodeContribution(spell, contrib);
+  } catch {
+    /* ignore */
+  }
+
+  const title = spellFaceTitle(spell);
+  const subtitle = String(spell.subtitle || spell.essence || "").trim();
+  const target = String(spell.target || focus?.name || "Focus").trim();
+  const channel = spell.medium || (focus ? getSealedChannel(focus) : "Open");
+  const backend = getKnownBackendProfile(channel);
+  const md = formatSpellMarkdown(spell);
+  const paste = spellPasteHint(spell, focus);
+  const iter = Number(spell.iteration) || 1;
+  const status = spellStatusLabel(spell);
+  const tags = (Array.isArray(spell.tags) ? spell.tags : inferSpellTags(spell))
+    .map((t) => `<span class="spell-face-tag">${escapeHtml(t)}</span>`)
+    .join("");
+
+  if (els.spellDetailTitle) els.spellDetailTitle.textContent = title;
+  if (els.spellDetailSub) {
+    els.spellDetailSub.textContent = subtitle || `v${iter} · ${status} · → ${target}`;
+  }
+
+  // SCROLL node match for target config
+  let scrollNode = null;
+  try {
+    const { nodes } = await readScrollListNodes(state.conversations);
+    scrollNode =
+      resolveScrollNode(target, nodes, { poe: channel }) ||
+      resolveScrollNode(target, nodes, {}) ||
+      null;
+  } catch {
+    /* ignore */
+  }
+
+  const nodeChannel = scrollNode?.poe || channel;
+  const nodePurpose = scrollNode?.purpose || backend?.format || "—";
+  const nodeQuirks = backend?.quirks || scrollNode?.notes || "—";
+  const nodeFormat = backend?.format || "—";
+  const nodeAvoids = backend?.avoids || "—";
+  const intelPath =
+    scrollNode?.intel_file_path ||
+    entityIntelPath(focus ? entityIdFromFocus(focus) : target);
+
+  if (els.spellDetailSide) {
+    els.spellDetailSide.innerHTML = `
+      <div class="spell-detail-face-block">
+        <div class="spell-face-meta">
+          <span class="spell-face-target">${escapeHtml(target)}</span>
+          <span class="spell-face-version">v${iter}</span>
+        </div>
+        <div class="spell-face-meta">
+          <span class="spell-face-status spell-face-status-${escapeHtml(
+            String(spell.status || "ready").toLowerCase()
+          )}">${escapeHtml(status)}</span>
+        </div>
+        ${tags ? `<div class="spell-face-tags">${tags}</div>` : ""}
+      </div>
+      <div class="spell-detail-section">
+        <h3>Intelligence contribution</h3>
+        <p class="spell-face-contrib-label">From vault sources into ${escapeHtml(
+          metricFocus?.name || "this focus"
+        )}</p>
+        ${contribDetailHtml(contrib)}
+      </div>
+      <div class="spell-detail-section">
+        <h3>Target node</h3>
+        <div class="spell-detail-kv">
+          <div><span class="k">Name</span><span class="v">${escapeHtml(target)}</span></div>
+          <div><span class="k">Channel</span><span class="v">${escapeHtml(nodeChannel)}</span></div>
+          <div><span class="k">Model / medium</span><span class="v">${escapeHtml(
+            backend?.name || nodeChannel
+          )}</span></div>
+          <div><span class="k">Intel path</span><span class="v" style="font-size:0.62rem;word-break:break-all">${escapeHtml(
+            String(intelPath)
+          )}</span></div>
+        </div>
+      </div>
+      <div class="spell-detail-section">
+        <h3>Node settings</h3>
+        <div class="spell-detail-kv">
+          <div><span class="k">Format</span><span class="v" style="text-align:left;max-width:58%">${escapeHtml(
+            String(nodeFormat).slice(0, 120)
+          )}</span></div>
+          <div><span class="k">Quirks</span><span class="v" style="text-align:left;max-width:58%">${escapeHtml(
+            String(nodeQuirks).slice(0, 140)
+          )}</span></div>
+          <div><span class="k">Avoids</span><span class="v" style="text-align:left;max-width:58%">${escapeHtml(
+            String(nodeAvoids).slice(0, 100)
+          )}</span></div>
+          <div><span class="k">Purpose</span><span class="v" style="text-align:left;max-width:58%">${escapeHtml(
+            String(nodePurpose).slice(0, 120)
+          )}</span></div>
+        </div>
+      </div>
+    `;
+  }
+
+  const versions = Array.isArray(spell.versions) ? spell.versions : [];
+  const versionHtml = versions.length
+    ? `<ul class="spell-version-timeline">${versions
+        .slice()
+        .reverse()
+        .map((v, idx, arr) => {
+          const prev = arr[idx + 1];
+          const curLen = String(v.content || "").length;
+          const prevLen = prev ? String(prev.content || "").length : null;
+          const delta =
+            prevLen != null ? (curLen > prevLen ? `+${curLen - prevLen}` : String(curLen - prevLen)) : "origin";
+          return `<li>
+            <div class="ver-head"><span>v${escapeHtml(String(v.version || "?"))}</span><span>${escapeHtml(
+              delta
+            )} chars</span></div>
+            ${v.note ? `<div class="ver-note">${escapeHtml(v.note)}</div>` : ""}
+            <div class="ver-preview">${escapeHtml(String(v.content || "").slice(0, 280))}${
+              String(v.content || "").length > 280 ? "…" : ""
+            }</div>
+          </li>`;
+        })
+        .join("")}</ul>`
+    : `<p class="contrib-empty">v${iter} only — no prior versions</p>`;
+
+  if (els.spellDetailMain) {
+    els.spellDetailMain.innerHTML = `
+      <div class="spell-detail-section">
+        <h3>Copy / paste directions</h3>
+        <p class="spell-detail-directions">${escapeHtml(
+          paste ||
+            `Copy this spell and paste it to ${target}. Paste their reply back into the ${
+              focus?.name || "current"
+            } focus to densen intelligence.`
+        )}</p>
+      </div>
+      <div class="spell-detail-section">
+        <h3>Spell content</h3>
+        <pre class="spell-detail-prompt" id="spell-detail-prompt-text">${escapeHtml(md)}</pre>
+      </div>
+      <div class="spell-detail-section">
+        <h3>Version history</h3>
+        ${versionHtml}
+      </div>
+      <div class="spell-detail-section">
+        <h3>Actions</h3>
+        <div class="spell-expanded-actions" style="display:flex;flex-wrap:wrap;gap:0.4rem">
+          <button type="button" class="btn-spell edit" data-action="detail-edit">Edit face &amp; content</button>
+          <button type="button" class="btn-spell promote" data-action="detail-promote">To Active</button>
+          <button type="button" class="btn-spell refine" data-action="detail-refine">Refine → v${
+            iter + 1
+          }</button>
+        </div>
+      </div>
+    `;
+    els.spellDetailMain.querySelector('[data-action="detail-edit"]')?.addEventListener("click", () => {
+      openEditSpellDialog(null, spell);
+      void openSpellDetailModal(spell, { sealOnCopy, convo: focus });
+    });
+    els.spellDetailMain.querySelector('[data-action="detail-promote"]')?.addEventListener("click", () => {
+      promoteSpellToActive(spell.id, { refine: false });
+      closeSpellDetailModal();
+    });
+    els.spellDetailMain.querySelector('[data-action="detail-refine"]')?.addEventListener("click", () => {
+      promoteSpellToActive(spell.id, { refine: true });
+      closeSpellDetailModal();
+    });
+  }
+
+  try {
+    if (typeof els.spellDetailDialog.showModal === "function") {
+      if (!els.spellDetailDialog.open) els.spellDetailDialog.showModal();
+    } else {
+      els.spellDetailDialog.removeAttribute("hidden");
+    }
+  } catch (err) {
+    console.warn("[spell-detail] open failed", err);
+    els.spellDetailDialog.removeAttribute("hidden");
+  }
+}
+
+function closeSpellDetailModal() {
+  spellDetailContext = null;
+  const d = els.spellDetailDialog;
+  if (!d) return;
+  try {
+    if (d.open && typeof d.close === "function") d.close();
+    else d.setAttribute("hidden", "");
+  } catch {
+    d.setAttribute("hidden", "");
+  }
 }
 
 /** True while SELF-CAST is injecting into chat — skip auto-forge echo. */
@@ -5826,6 +6104,7 @@ async function densenCastSpellIntelligence(convo, spell) {
     certainty: ensureCertainty(convo),
     tags: ["cast-spell", spell?.kind || "spell"].filter(Boolean),
   });
+  invalidateContribCache(convo.id);
   const cell2 = ensureCell2CoreFocus(state);
   if (cell2) {
     await appendCell2Intelligence(cell2, {
@@ -7100,6 +7379,33 @@ els.btnCloseSpells?.addEventListener("click", (e) => {
 els.tabSpellsActive?.addEventListener("click", () => setSpellView("active"));
 els.tabSpellsLibrary?.addEventListener("click", () => setSpellView("library"));
 els.tabSpellsHistory?.addEventListener("click", () => setSpellView("history"));
+
+// Spell detail modal
+els.btnSpellDetailClose?.addEventListener("click", () => closeSpellDetailModal());
+els.spellDetailDialog?.addEventListener("cancel", (e) => {
+  e.preventDefault();
+  closeSpellDetailModal();
+});
+els.spellDetailDialog?.addEventListener("click", (e) => {
+  // Click backdrop (dialog itself) to dismiss
+  if (e.target === els.spellDetailDialog) closeSpellDetailModal();
+});
+els.btnSpellDetailCopy?.addEventListener("click", async () => {
+  const id = spellDetailContext?.spellId;
+  if (!id) return;
+  await copySpell(id, { seal: false });
+  toast("Spell content copied", "success");
+});
+els.btnSpellDetailCast?.addEventListener("click", async () => {
+  const id = spellDetailContext?.spellId;
+  if (!id) return;
+  const seal = spellDetailContext?.sealOnCopy !== false;
+  await copySpell(id, { seal });
+  closeSpellDetailModal();
+  const focus = activeConvo();
+  if (focus) invalidateContribCache(focus.id);
+  void renderSpells();
+});
 
 // Universe view — hide AI chat; pure intelligence sky (Focus = nucleus)
 els.btnUniverseView?.addEventListener("click", () => toggleUniverseView());

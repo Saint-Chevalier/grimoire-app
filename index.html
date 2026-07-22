@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=spell-face-1" />
+  <link rel="stylesheet" href="css/styles.css?v=spell-detail-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -217,6 +217,32 @@
       <div class="spells-list" id="spells-list"></div>
     </aside>
   </div>
+
+  <!-- Spell detail — expanded face + content + metrics + versions -->
+  <dialog id="spell-detail-dialog" class="modal spell-detail-modal" aria-labelledby="spell-detail-title">
+    <div class="spell-detail-shell">
+      <header class="spell-detail-header">
+        <div class="spell-detail-header-text">
+          <p class="spell-detail-kicker">Spell detail</p>
+          <h2 id="spell-detail-title">—</h2>
+          <p class="spell-detail-sub" id="spell-detail-sub"></p>
+        </div>
+        <button type="button" class="atlas-close" id="btn-spell-detail-close" title="Close" aria-label="Close spell detail">×</button>
+      </header>
+      <div class="spell-detail-body">
+        <aside class="spell-detail-side" id="spell-detail-side">
+          <!-- Face summary + metrics filled by JS -->
+        </aside>
+        <div class="spell-detail-main" id="spell-detail-main">
+          <!-- Scrollable content filled by JS -->
+        </div>
+      </div>
+      <footer class="spell-detail-footer">
+        <button type="button" class="btn-secondary" id="btn-spell-detail-copy">Copy content</button>
+        <button type="button" class="btn-primary" id="btn-spell-detail-cast">Cast (copy &amp; seal)</button>
+      </footer>
+    </div>
+  </dialog>
 
   <!-- Complex spell craft — modal (not bottom dock). Opened via Spells → Craft complex spell -->
   <dialog id="complex-craft-dialog" class="modal complex-craft-modal">
@@ -439,7 +465,7 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=spell-face-1"></script>
+  <script type="module" src="js/app.js?v=spell-detail-1"></script>
   <!--
     Emergency boot (non-module): works even if app.js ES module fails to load.
     Paints focuses from localStorage + Create persists + reloads.

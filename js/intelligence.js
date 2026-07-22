@@ -919,6 +919,173 @@ export async function appendCell2Intelligence(focus, opts = {}) {
 }
 
 /**
+ * Parse intelligence.md (or memory-rendered text) into YAML-frontmatter entries.
+ * @returns {{ source: string, body: string, bytes: number, timestamp?: string }[]}
+ */
+export function parseIntelligenceEntriesFromText(text) {
+  const raw = String(text || "");
+  if (!raw.trim()) return [];
+  const entries = [];
+  // Split on frontmatter fences
+  const blocks = raw.split(/\n---\s*\n/);
+  // Pattern: after a --- header block comes body until next ---
+  // Also handle leading --- at start
+  const re =
+    /(?:^|\n)---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*?)(?=(?:\n---\s*\n)|$)/g;
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    const fm = m[1] || "";
+    const body = (m[2] || "").trim();
+    const srcMatch = fm.match(/^\s*source:\s*(.+)\s*$/im);
+    const tsMatch = fm.match(/^\s*timestamp:\s*(.+)\s*$/im);
+    const source = String(srcMatch?.[1] || "unknown").trim() || "unknown";
+    const bytes = body.length || 1;
+    entries.push({
+      source,
+      body,
+      bytes,
+      timestamp: tsMatch?.[1]?.trim() || "",
+    });
+  }
+  // Fallback: no frontmatter — treat whole file as one unknown blob
+  if (!entries.length && raw.trim() && !/^#\s/.test(raw.trim())) {
+    entries.push({
+      source: "unknown",
+      body: raw.trim(),
+      bytes: raw.trim().length,
+      timestamp: "",
+    });
+  }
+  return entries;
+}
+
+/**
+ * Count vault entries by source for a focus.
+ * Prefers filesystem intelligence.md; merges in-memory intelLog.
+ * @returns {Promise<{ sources: Record<string,{count:number,bytes:number}>, totalCount: number, totalBytes: number, method: string }>}
+ */
+export async function vaultEntrySourceCount(focusOrId) {
+  const focus =
+    typeof focusOrId === "object" && focusOrId ? focusOrId : null;
+  const focusId =
+    focus?.id ||
+    (typeof focusOrId === "string" ? focusOrId : null);
+
+  const sources = Object.create(null);
+  const add = (source, bytes = 1) => {
+    const key = String(source || "unknown").trim() || "unknown";
+    if (!sources[key]) sources[key] = { count: 0, bytes: 0 };
+    sources[key].count += 1;
+    sources[key].bytes += Math.max(1, Number(bytes) || 1);
+  };
+
+  // Memory log always counts (even when vault has a copy — de-dupe by not double-counting if vault present)
+  const memEntries = Array.isArray(focus?.intelLog)
+    ? focus.intelLog
+    : Array.isArray(focus?.neuralLog)
+      ? focus.neuralLog
+      : [];
+
+  let method = "memory";
+  try {
+    const intel = await readEntityIntelligence(focus || focusId);
+    method = intel?.method || method;
+    if (intel?.text && intel.method === "filesystem") {
+      for (const e of parseIntelligenceEntriesFromText(intel.text)) {
+        add(e.source, e.bytes);
+      }
+    } else {
+      for (const e of memEntries) {
+        add(e.source || "Cell2", String(e.content || e.body || "").length || 1);
+      }
+      if (intel?.text && !memEntries.length) {
+        for (const e of parseIntelligenceEntriesFromText(intel.text)) {
+          add(e.source, e.bytes);
+        }
+      }
+    }
+  } catch {
+    for (const e of memEntries) {
+      add(e.source || "Cell2", String(e.content || e.body || "").length || 1);
+    }
+  }
+
+  let totalCount = 0;
+  let totalBytes = 0;
+  for (const k of Object.keys(sources)) {
+    totalCount += sources[k].count;
+    totalBytes += sources[k].bytes;
+  }
+  return { sources, totalCount, totalBytes, method, focusId };
+}
+
+/**
+ * Node contribution metrics for a focus's intelligence noodle.
+ * Weighted by entry body size (bytes), not just count.
+ * @returns {Promise<{ rows: Array<{source:string,count:number,bytes:number,percent:number,color:string}>, totalCount:number, totalBytes:number, empty:boolean }>}
+ */
+export async function calculateNodeContributions(focusOrId) {
+  const raw = await vaultEntrySourceCount(focusOrId);
+  const totalBytes = raw.totalBytes || 0;
+  const totalCount = raw.totalCount || 0;
+  const palette = [
+    "#a78bfa",
+    "#60a5fa",
+    "#34d399",
+    "#fbbf24",
+    "#f472b6",
+    "#22d3ee",
+    "#fb923c",
+    "#94a3b8",
+  ];
+  const keys = Object.keys(raw.sources || {}).sort(
+    (a, b) => (raw.sources[b].bytes || 0) - (raw.sources[a].bytes || 0)
+  );
+  const rows = keys.map((source, i) => {
+    const s = raw.sources[source];
+    const percent =
+      totalBytes > 0
+        ? Math.round((s.bytes / totalBytes) * 1000) / 10
+        : totalCount > 0
+          ? Math.round((s.count / totalCount) * 1000) / 10
+          : 0;
+    return {
+      source,
+      count: s.count,
+      bytes: s.bytes,
+      percent,
+      color: palette[i % palette.length],
+    };
+  });
+  // Normalize rounding so sum ~ 100
+  if (rows.length && totalBytes > 0) {
+    const sum = rows.reduce((a, r) => a + r.percent, 0);
+    if (Math.abs(sum - 100) >= 0.2 && rows[0]) {
+      rows[0].percent = Math.round((rows[0].percent + (100 - sum)) * 10) / 10;
+    }
+  }
+  return {
+    rows,
+    totalCount,
+    totalBytes,
+    empty: !rows.length,
+    method: raw.method,
+    focusId: raw.focusId,
+  };
+}
+
+/** Backend/medium profile for target node panel */
+export function getKnownBackendProfile(mediumOrName) {
+  const key = String(mediumOrName || "").trim();
+  if (!key) return null;
+  if (KNOWN_BACKENDS[key]) return { ...KNOWN_BACKENDS[key] };
+  const hit = Object.keys(KNOWN_BACKENDS).find(
+    (k) => k.toLowerCase() === key.toLowerCase()
+  );
+  return hit ? { ...KNOWN_BACKENDS[hit] } : null;
+}
+
+/**
  * Read entity intelligence.md (vault or memory).
  */
 export async function readEntityIntelligence(focusOrId) {
@@ -927,6 +1094,9 @@ export async function readEntityIntelligence(focusOrId) {
   const entityId = focus
     ? entityIdFromFocus(focus)
     : sanitizeEntityId(focusOrId || CELL2_CORE_ID);
+  const focusId =
+    focus?.id ||
+    (typeof focusOrId === "string" ? focusOrId : null);
   const relPath = entityIntelPath(entityId);
   const memEntries = Array.isArray(focus?.intelLog)
     ? focus.intelLog
@@ -934,7 +1104,7 @@ export async function readEntityIntelligence(focusOrId) {
       ? focus.neuralLog
       : [];
 
-  const root = await getVaultRoot();
+  const root = await getVaultRoot(focusId);
   if (root) {
     try {
       const entDir = await root.getDirectoryHandle(sanitizeEntityId(entityId), {

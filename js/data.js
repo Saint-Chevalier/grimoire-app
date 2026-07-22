@@ -1011,6 +1011,71 @@ export function spellStatusLabel(spell) {
   return "Ready";
 }
 
+/**
+ * Attach / refresh nodeContribution snapshot on a spell (face metrics).
+ * @param {object} spell
+ * @param {{ rows?: Array<{source:string,percent:number,color?:string}> }|null} breakdown
+ */
+export function applySpellNodeContribution(spell, breakdown) {
+  if (!spell) return spell;
+  const rows = Array.isArray(breakdown?.rows) ? breakdown.rows : [];
+  spell.nodeContribution = {
+    updatedAt: Date.now(),
+    empty: !rows.length,
+    rows: rows.map((r) => ({
+      source: r.source,
+      percent: r.percent,
+      count: r.count,
+      color: r.color,
+    })),
+  };
+  return spell;
+}
+
+/**
+ * Pure: turn raw source→{count,bytes} map into percentage rows.
+ * Used when metrics are computed offline / tests without vault.
+ */
+export function contributionPercentages(sourceMap) {
+  const sources = sourceMap && typeof sourceMap === "object" ? sourceMap : {};
+  let totalBytes = 0;
+  let totalCount = 0;
+  for (const k of Object.keys(sources)) {
+    totalBytes += Number(sources[k]?.bytes) || 0;
+    totalCount += Number(sources[k]?.count) || 0;
+  }
+  const palette = [
+    "#a78bfa",
+    "#60a5fa",
+    "#34d399",
+    "#fbbf24",
+    "#f472b6",
+    "#22d3ee",
+    "#fb923c",
+    "#94a3b8",
+  ];
+  const keys = Object.keys(sources).sort(
+    (a, b) =>
+      (Number(sources[b]?.bytes) || 0) - (Number(sources[a]?.bytes) || 0)
+  );
+  return keys.map((source, i) => {
+    const s = sources[source] || {};
+    const percent =
+      totalBytes > 0
+        ? Math.round(((Number(s.bytes) || 0) / totalBytes) * 1000) / 10
+        : totalCount > 0
+          ? Math.round(((Number(s.count) || 0) / totalCount) * 1000) / 10
+          : 0;
+    return {
+      source,
+      count: Number(s.count) || 0,
+      bytes: Number(s.bytes) || 0,
+      percent,
+      color: palette[i % palette.length],
+    };
+  });
+}
+
 /** Face title helper */
 export function spellFaceTitle(spell) {
   return String(spell?.title || spell?.purpose || "Untitled spell").trim() || "Untitled spell";
