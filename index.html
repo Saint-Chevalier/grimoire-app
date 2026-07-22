@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=new-focus-unbreakable-1" />
+  <link rel="stylesheet" href="css/styles.css?v=new-focus-cancel-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -235,7 +235,14 @@
         Person: densen who they are and craft message-spells for real life. Medium is open — Discord, text, in-person, anything.
       </p>
       <div class="modal-actions">
-        <button type="button" class="btn-secondary" id="btn-cancel-new">Cancel</button>
+        <button
+          type="button"
+          class="btn-secondary"
+          id="btn-cancel-new"
+          onclick="window.__closeNewFocusModal&&window.__closeNewFocusModal(event);return false;"
+        >
+          Cancel
+        </button>
         <button type="submit" class="btn-primary" id="btn-create-focus">Create</button>
       </div>
     </form>
@@ -375,7 +382,7 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=new-focus-unbreakable-1"></script>
+  <script type="module" src="js/app.js?v=new-focus-cancel-1"></script>
   <!-- Early global stub so HTML onclick works even before module finishes evaluating -->
   <script>
     window.__grimoireOpenNewFocus = window.__grimoireOpenNewFocus || function (e) {

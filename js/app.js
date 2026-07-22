@@ -3449,6 +3449,68 @@ function getNewFocusDialogEls() {
 }
 
 /**
+ * Hard-close New Focus modal — clears open attr AND any forced open styles.
+ * Cancel / Escape / post-create all use this.
+ */
+function closeNewFocusModal(e) {
+  if (e) {
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch {
+      /* ignore */
+    }
+  }
+  const dialog =
+    document.getElementById("new-convo-dialog") || els.dialog || null;
+  const form =
+    document.getElementById("new-convo-form") || els.newForm || null;
+  if (!dialog) return false;
+
+  try {
+    if (typeof dialog.close === "function") dialog.close();
+  } catch {
+    /* ignore */
+  }
+  try {
+    dialog.removeAttribute("open");
+  } catch {
+    /* ignore */
+  }
+  try {
+    dialog.setAttribute("hidden", "");
+  } catch {
+    /* ignore */
+  }
+
+  // Wipe forced open styles from openNewFocusModal (these were blocking Cancel)
+  try {
+    dialog.style.removeProperty("display");
+    dialog.style.removeProperty("visibility");
+    dialog.style.removeProperty("opacity");
+    dialog.style.removeProperty("z-index");
+    dialog.style.removeProperty("pointer-events");
+    // Belt-and-suspenders hide if UA still paints it
+    dialog.style.setProperty("display", "none", "important");
+  } catch {
+    try {
+      dialog.style.display = "none";
+    } catch {
+      /* ignore */
+    }
+  }
+
+  try {
+    form?.reset?.();
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+window.__closeNewFocusModal = closeNewFocusModal;
+window.__grimoireCloseNewFocus = closeNewFocusModal;
+
+/**
  * Open New Focus modal — bulletproof.
  * Live DOM only. Multiple open strategies. Always focuses name field.
  */
@@ -3479,6 +3541,16 @@ function openNewFocusModal({ name, type, model } = {}) {
     /* ignore */
   }
 
+  // Clear any leftover hard-hide from a prior cancel
+  try {
+    dialog.style.removeProperty("display");
+    dialog.style.removeProperty("visibility");
+    dialog.style.removeProperty("opacity");
+    dialog.removeAttribute("hidden");
+  } catch {
+    /* ignore */
+  }
+
   if (newName) newName.value = name || "";
   const t = type || "person";
   if (newType) newType.value = t;
@@ -3488,7 +3560,11 @@ function openNewFocusModal({ name, type, model } = {}) {
   }
 
   const isAi = (newType?.value || t) === "ai";
-  if (newModelLabel) newModelLabel.hidden = !isAi;
+  if (newModelLabel) {
+    newModelLabel.hidden = !isAi;
+    if (isAi) newModelLabel.removeAttribute("hidden");
+    else newModelLabel.setAttribute("hidden", "");
+  }
   if (newFocusHint) {
     const hints = {
       person:
@@ -3503,10 +3579,9 @@ function openNewFocusModal({ name, type, model } = {}) {
     newFocusHint.textContent = hints[newType?.value || t] || hints.person;
   }
 
-  dialog.removeAttribute("hidden");
   dialog.classList.add("new-focus-dialog");
 
-  // Prefer showModal; fall back to open attribute + forced styles
+  // Prefer showModal; fall back to open attribute
   let opened = false;
   try {
     if (dialog.open && typeof dialog.close === "function") {
@@ -3534,15 +3609,18 @@ function openNewFocusModal({ name, type, model } = {}) {
       /* ignore */
     }
     dialog.setAttribute("open", "");
+    dialog.removeAttribute("hidden");
     opened = true;
   }
 
-  // Force visibility against hostile CSS
-  dialog.style.display = "block";
-  dialog.style.visibility = "visible";
-  dialog.style.opacity = "1";
-  dialog.style.zIndex = "10000";
-  dialog.style.pointerEvents = "auto";
+  // Only force visibility while open — closeNewFocusModal clears these
+  if (dialog.open || dialog.hasAttribute("open")) {
+    dialog.style.setProperty("display", "block", "important");
+    dialog.style.setProperty("visibility", "visible", "important");
+    dialog.style.setProperty("opacity", "1", "important");
+    dialog.style.setProperty("z-index", "10000", "important");
+    dialog.style.setProperty("pointer-events", "auto", "important");
+  }
 
   if (newName) {
     try {
@@ -5777,17 +5855,7 @@ function submitNewFocusForm(e) {
         "none"
       : "none";
   const created = createConversation({ name, type, model });
-  // Close dialog only after create attempt
-  try {
-    const d = dialog || document.getElementById("new-convo-dialog");
-    if (d) {
-      if (typeof d.close === "function") d.close();
-      else d.removeAttribute("open");
-      d.style.display = "";
-    }
-  } catch {
-    /* ignore */
-  }
+  closeNewFocusModal();
   return Boolean(created);
 }
 window.__submitNewFocusForm = submitNewFocusForm;
@@ -6059,25 +6127,47 @@ function bindNewFocusAll() {
   bindNewFocusForm();
   const cancel = document.getElementById("btn-cancel-new");
   if (cancel) {
-    cancel.onclick = (e) => {
-      e.preventDefault();
-      const d = document.getElementById("new-convo-dialog");
-      try {
-        if (d?.close) d.close();
-        else d?.removeAttribute("open");
-        if (d) d.style.display = "";
-      } catch {
-        /* ignore */
-      }
-    };
+    cancel.type = "button";
+    cancel.onclick = closeNewFocusModal;
+    cancel.removeEventListener("click", closeNewFocusModal);
+    cancel.addEventListener("click", closeNewFocusModal);
+  }
+  const dialog = document.getElementById("new-convo-dialog");
+  if (dialog) {
+    // Esc / cancel event on <dialog>
+    dialog.removeEventListener("cancel", closeNewFocusModal);
+    dialog.addEventListener("cancel", closeNewFocusModal);
+    dialog.removeEventListener("close", onNewFocusDialogClose);
+    dialog.addEventListener("close", onNewFocusDialogClose);
+  }
+}
+function onNewFocusDialogClose() {
+  // Ensure forced styles never leave a ghost dialog after native close
+  const d = document.getElementById("new-convo-dialog");
+  if (!d || d.open) return;
+  try {
+    d.style.removeProperty("display");
+    d.style.removeProperty("visibility");
+    d.style.removeProperty("opacity");
+    d.style.removeProperty("z-index");
+    d.style.removeProperty("pointer-events");
+    d.style.setProperty("display", "none", "important");
+  } catch {
+    /* ignore */
   }
 }
 bindNewFocusAll();
 
-// Capture phase: ALWAYS open New Focus (HTML onclick may also fire — open is idempotent)
+// Capture phase: ALWAYS open New Focus OR close via Cancel
 document.addEventListener(
   "click",
   (e) => {
+    // Cancel / backdrop-close path first
+    const cancelBtn = e.target?.closest?.("#btn-cancel-new");
+    if (cancelBtn) {
+      closeNewFocusModal(e);
+      return;
+    }
     const btn = e.target?.closest?.("#btn-new-convo");
     if (!btn) return;
     // Don't double-fire if the click already went through our handler this tick
@@ -6094,6 +6184,15 @@ document.addEventListener(
   },
   true
 );
+
+// Escape while New Focus is open
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const d = document.getElementById("new-convo-dialog");
+  if (d && (d.open || d.hasAttribute("open"))) {
+    closeNewFocusModal(e);
+  }
+});
 
 // Capture phase: ALWAYS handle form submit for create
 document.addEventListener(
@@ -6117,16 +6216,7 @@ els.btnClearAll?.addEventListener("click", () => {
   requestClearAllSpells();
 });
 
-els.btnCancelNew?.addEventListener("click", () => {
-  const d = document.getElementById("new-convo-dialog") || els.dialog;
-  try {
-    if (d?.close) d.close();
-    else d?.removeAttribute("open");
-    if (d) d.style.display = "";
-  } catch {
-    /* ignore */
-  }
-});
+els.btnCancelNew?.addEventListener("click", closeNewFocusModal);
 
 els.editDialog?.addEventListener("submit", (e) => {
   e.preventDefault();

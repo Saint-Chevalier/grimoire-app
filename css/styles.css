@@ -3448,11 +3448,16 @@ body.universe-view-active .message.system {
 /* ─── Modal ─── */
 
 /* Native <dialog>: force closed/open display so custom styles never leave it inert */
-dialog.modal:not([open]) {
+dialog.modal:not([open]),
+dialog.modal[hidden],
+dialog.new-focus-dialog:not([open]),
+dialog.new-focus-dialog[hidden] {
   display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
-dialog.modal[open],
-dialog.modal.new-focus-dialog[open] {
+dialog.modal[open]:not([hidden]),
+dialog.modal.new-focus-dialog[open]:not([hidden]) {
   display: block !important;
   visibility: visible !important;
   opacity: 1 !important;
