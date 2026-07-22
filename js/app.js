@@ -60,13 +60,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=focus-name-only-1";
+} from "./data.js?v=vault-folder-fix-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=focus-name-only-1";
+} from "./stars.js?v=vault-folder-fix-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -1140,32 +1140,38 @@ function buildPathOnboardingCallout(c) {
 }
 
 /**
- * Per-focus "Create my path" — user gesture → picker → <Name>-FocusIntelligence/
+ * Per-focus path link — user gesture → OS folder picker → vault dir for this focus.
  */
 async function onChooseFocusPath(focus) {
   if (!focus?.id) return;
   if (!hasDirectoryPicker()) {
-    toast("Use Chrome or Edge for on-disk vault writes", "");
+    toast("Use Chrome or Edge (not Firefox) for folder access", "");
     return;
   }
   try {
     const handle = await chooseFocusIntelligenceFolder(focus);
+    // Unlock even if later UI refresh fails
     setVaultFailState(false);
     markFocusVaultLinked(focus.id);
-    toast(`Path ready: ${handle.name}/ · focus unlocked`, "success");
-    activityPing(`✦ Focus vault: ${handle.name}/`);
-    await refreshIntelFolderUi();
     persist();
+    toast(`Vault ready: ${handle.name}/ · focus unlocked`, "success");
+    activityPing(`✦ Focus vault: ${handle.name}/`);
+    try {
+      await refreshIntelFolderUi();
+    } catch {
+      /* ignore */
+    }
     renderAll();
   } catch (err) {
     if (err?.name === "AbortError") {
-      renderConvoList();
+      // User closed the picker — not an error
       return;
     }
-    console.warn(err);
+    console.error("[vault] choose focus path failed", err);
     setVaultFailState(true);
-    toast("Could not open folder", "");
-    renderConvoList();
+    const detail = String(err?.message || err?.name || err || "unknown error").slice(0, 120);
+    toast(`Could not open folder: ${detail}`, "");
+    renderAll();
   }
 }
 
@@ -5803,48 +5809,70 @@ async function refreshIntelFolderUi() {
 
 async function onChooseIntelFolder() {
   if (!hasDirectoryPicker()) {
-    toast("Use Chrome or Edge for on-disk vault writes", "");
-    await refreshIntelFolderUi();
+    toast("Use Chrome or Edge (not Firefox) for folder access", "");
+    try {
+      await refreshIntelFolderUi();
+    } catch {
+      /* ignore */
+    }
     return;
   }
   try {
     const handle = await chooseIntelligenceFolder();
     setVaultFailState(false);
-    toast(`Vault ready: ${handle.name}/`, "success");
-    activityPing(`✦ Vault linked: ${handle.name}/`);
-    await refreshIntelFolderUi();
-    const cell2 = ensureCell2CoreFocus(state);
-    if (cell2) await ensureCell2IntelligenceFile(cell2);
-    for (const c of state.conversations) {
-      if (isCell2CoreFocus(c)) continue;
-      await appendEntityIntelligence(c, {
-        body: `Vault linked · sealed **${c.name}** · ${getSealedChannel(c)}`,
-        source: "Cell2",
-        category: "identity",
-        certainty: ensureCertainty(c),
-        tags: ["vault-link"],
-      });
-    }
-    await updateScrollListIndex(state.conversations, state.spells);
-    // Global 📁 does not mark every focus vault-linked — each still has Create my path
-    // Optionally seed active focus as linked if it didn't have a path yet
+
+    // If a locked focus is active, that focus owns this pick
     const active = activeConvo();
-    if (active && !isCell2CoreFocus(active) && !isFocusPathLinked(active)) {
-      // Store global handle also under active focus for convenience
+    if (active && !isCell2CoreFocus(active)) {
       try {
         await setFocusFolderHandle(active.id, handle, handle.name);
         markFocusVaultLinked(active.id);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        console.warn("[vault] active focus link", err);
       }
     }
+
     persist();
+    toast(`Vault ready: ${handle.name}/`, "success");
+    activityPing(`✦ Vault linked: ${handle.name}/`);
+
+    // Seed writes are best-effort — never roll back a successful folder pick
+    try {
+      await refreshIntelFolderUi();
+    } catch {
+      /* ignore */
+    }
+    try {
+      const cell2 = ensureCell2CoreFocus(state);
+      if (cell2) await ensureCell2IntelligenceFile(cell2);
+    } catch (err) {
+      console.warn("[vault] cell2 seed", err);
+    }
+    try {
+      if (active && !isCell2CoreFocus(active)) {
+        await appendEntityIntelligence(active, {
+          body: `Vault linked · sealed **${active.name}** · ${getSealedChannel(active)}`,
+          source: "Cell2",
+          category: "identity",
+          certainty: ensureCertainty(active),
+          tags: ["vault-link"],
+        });
+      }
+    } catch (err) {
+      console.warn("[vault] active seed", err);
+    }
+    try {
+      await updateScrollListIndex(state.conversations, state.spells);
+    } catch (err) {
+      console.warn("[vault] scroll index", err);
+    }
     renderAll();
   } catch (err) {
     if (err?.name === "AbortError") return;
-    console.warn(err);
+    console.error("[vault] choose folder failed", err);
     setVaultFailState(true);
-    toast("Could not open folder", "");
+    const detail = String(err?.message || err?.name || err || "unknown error").slice(0, 120);
+    toast(`Could not open folder: ${detail}`, "");
   }
 }
 

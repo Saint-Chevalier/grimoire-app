@@ -150,44 +150,128 @@ export async function setFocusFolderHandle(focusId, handle, folderName = "") {
     } else if (handle.name) {
       localStorage.setItem(focusIntelLsNameKey(id), handle.name);
     }
-  } catch {
-    /* memory-only this session */
+  } catch (err) {
+    // Still usable this session via memory cache
+    console.warn("setFocusFolderHandle persist", err);
   }
   return true;
 }
 
 /**
- * User gesture: pick parent → create <FocusName>-FocusIntelligence/ → store per-focus.
+ * Open OS folder picker (user gesture required).
+ * Tries several option sets — some Chromium builds reject startIn/id combos.
+ */
+export async function pickDirectoryHandle() {
+  if (!hasDirectoryPicker()) {
+    throw new Error("File System Access API not available — use Chrome or Edge on localhost/https");
+  }
+  const attempts = [
+    { mode: "readwrite" },
+    { mode: "readwrite", startIn: "documents" },
+    { mode: "readwrite", startIn: "desktop" },
+    {},
+  ];
+  let lastErr = null;
+  for (const opts of attempts) {
+    try {
+      const handle = await window.showDirectoryPicker(opts);
+      if (handle) {
+        // Best-effort write permission (picker already asked in mode:readwrite)
+        try {
+          if (handle.requestPermission) {
+            await handle.requestPermission({ mode: "readwrite" });
+          }
+        } catch {
+          /* ignore */
+        }
+        return handle;
+      }
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
+      lastErr = err;
+      console.warn("showDirectoryPicker attempt failed", opts, err);
+    }
+  }
+  const msg = lastErr?.message || String(lastErr || "Folder picker failed");
+  const e = new Error(msg);
+  e.name = lastErr?.name || "FolderPickerError";
+  e.cause = lastErr;
+  throw e;
+}
+
+/**
+ * Ensure a writable vault dir under parent (create subfolder when possible).
+ * Falls back to the selected folder itself — never fails just because create failed.
+ */
+async function resolveWritableVaultDir(parent, preferredName) {
+  if (!parent) throw new Error("No folder selected");
+  const name = String(preferredName || INTEL_DIR_NAME).trim() || INTEL_DIR_NAME;
+
+  // User already picked a vault-looking folder — use it as-is
+  if (
+    parent.name === name ||
+    /-FocusIntelligence$/i.test(parent.name) ||
+    parent.name === INTEL_DIR_NAME
+  ) {
+    return parent;
+  }
+
+  // Prefer a dedicated subfolder for this focus / vault
+  try {
+    const sub = await parent.getDirectoryHandle(name, { create: true });
+    if (sub) return sub;
+  } catch (err) {
+    console.warn("create subfolder failed — using selected folder", name, err);
+  }
+
+  // Absolute fallback: write intelligence into the folder the user picked
+  return parent;
+}
+
+/** Probe write so we know the handle is usable */
+async function probeVaultWritable(handle) {
+  if (!handle) return false;
+  try {
+    const fh = await handle.getFileHandle(".grimoire-vault", { create: true });
+    const w = await fh.createWritable();
+    await w.write(`grimoire-vault-ok ${new Date().toISOString()}\n`);
+    await w.close();
+    return true;
+  } catch (err) {
+    console.warn("vault write probe failed", err);
+    return false;
+  }
+}
+
+/**
+ * User gesture: pick folder → create <FocusName>-FocusIntelligence/ when possible → store.
+ * Always stores a handle if the user selected a folder (even if seed writes fail).
  */
 export async function chooseFocusIntelligenceFolder(focus) {
   if (!hasDirectoryPicker()) {
-    throw new Error("File System Access API not available in this browser");
+    throw new Error("File System Access API not available — use Chrome or Edge");
   }
   if (!focus?.id) {
     throw new Error("Focus id required for per-focus vault");
   }
   const folderName = focusVaultFolderName(focus.name || focus.id);
-  const parent = await window.showDirectoryPicker({
-    id: `grimoire-focus-parent-${focus.id}`,
-    mode: "readwrite",
-    startIn: "documents",
-  });
+  const parent = await pickDirectoryHandle();
+  const handle = await resolveWritableVaultDir(parent, folderName);
 
-  let handle;
-  // If user already selected the target vault folder itself, use it
-  if (
-    parent.name === folderName ||
-    /-FocusIntelligence$/i.test(parent.name) ||
-    parent.name === INTEL_DIR_NAME
-  ) {
-    handle = parent;
-  } else {
-    handle = await parent.getDirectoryHandle(folderName, { create: true });
+  // Persist FIRST so unlock works even if later seed writes fail
+  await setFocusFolderHandle(focus.id, handle, handle.name || folderName);
+
+  const writable = await probeVaultWritable(handle);
+  if (!writable) {
+    // Still linked — may work after user re-grants permission next write
+    console.warn("Vault linked but probe write failed; folder may be read-only");
   }
 
-  await setFocusFolderHandle(focus.id, handle, handle.name || folderName);
-  await writeReadme(handle);
-  // Seed this focus's intelligence noodle at vault root + entity path
+  try {
+    await writeReadme(handle);
+  } catch (err) {
+    console.warn("README write failed", err);
+  }
   try {
     await appendEntityIntelligence(focus, {
       body: `Vault path linked for **${focus.name}** · folder \`${handle.name || folderName}\``,
@@ -250,36 +334,35 @@ export function getCachedDirHandle() {
 }
 
 /**
- * Legacy global picker (📁 header) — still creates one shared GRIMOIRE-FocusIntelligence/.
+ * Legacy global picker (📁 header) — creates GRIMOIRE-FocusIntelligence/ when possible.
  * Prefer chooseFocusIntelligenceFolder(focus) for per-focus paths.
  */
 export async function chooseIntelligenceFolder() {
   if (!hasDirectoryPicker()) {
-    throw new Error("File System Access API not available in this browser");
+    throw new Error("File System Access API not available — use Chrome or Edge");
   }
 
-  const parent = await window.showDirectoryPicker({
-    id: "grimoire-intelligence-parent",
-    mode: "readwrite",
-    startIn: "documents",
-  });
-
-  let handle;
-  if (parent.name === INTEL_DIR_NAME || /-FocusIntelligence$/i.test(parent.name)) {
-    handle = parent;
-  } else {
-    handle = await parent.getDirectoryHandle(INTEL_DIR_NAME, { create: true });
-  }
+  const parent = await pickDirectoryHandle();
+  const handle = await resolveWritableVaultDir(parent, INTEL_DIR_NAME);
 
   dirHandle = handle;
   try {
     await idbSet(IDB_KEY, handle);
     localStorage.setItem(LS_SETUP, "1");
     localStorage.setItem(LS_NAME, handle.name || INTEL_DIR_NAME);
-  } catch {
-    /* memory-only this session */
+  } catch (err) {
+    console.warn("global vault idb persist", err);
   }
-  await writeReadme(handle);
+  try {
+    await probeVaultWritable(handle);
+  } catch {
+    /* ignore */
+  }
+  try {
+    await writeReadme(handle);
+  } catch (err) {
+    console.warn("README write failed", err);
+  }
   return handle;
 }
 
