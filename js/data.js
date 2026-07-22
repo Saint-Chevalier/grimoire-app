@@ -14,17 +14,37 @@ export const MEDIUMS = ["Hermes", "Discord", "LinkedIn", "Text", "Email", "X", "
 /** Canonical purpose string for Alignment Reveal spells */
 export const ALIGNMENT_PURPOSE = "TRANSPARENCY & ALIGNMENT REVEAL";
 
-/** Cell2 Self-Intelligence system focus — app neural substrate */
+/** Cell2 Self-Intelligence — system AI substrate (not a visible Focus) */
 export const CELL2_CORE_ID = "cell2-core";
 export const CELL2_CORE_NAME = "Cell2 Core";
 
+/** Entity certainty levels (default unknown) */
+export const CERTAINTY_LEVELS = Object.freeze([
+  "confirmed",
+  "inferred",
+  "unknown",
+  "contradicted",
+]);
+
+/** Intelligence entry categories */
+export const INTEL_CATEGORIES = Object.freeze([
+  "doctrine",
+  "identity",
+  "node_intel",
+  "reality",
+  "grievance",
+  "preference",
+  "relationship",
+]);
+
 /**
- * Normalize legacy type values → person | ai | network | self-intelligence | …
+ * Normalize legacy type values → person | ai | network | …
+ * Cell2 Core is type "ai" (system); legacy self-intelligence maps to ai.
  */
 export function getFocusType(convo) {
   if (!convo) return "person";
   const t = convo.type;
-  if (t === "self-intelligence") return "self-intelligence";
+  if (t === "self-intelligence") return "ai"; // legacy Cell2 type → ai
   if (t === "eternal-intelligence") return "eternal-intelligence";
   if (t === "ai" || t === "ai-node") return "ai";
   if (t === "network" || t === "broadcast") return "network";
@@ -32,12 +52,73 @@ export function getFocusType(convo) {
   return "person";
 }
 
-/** True when Focus is the Cell2 Core self-intelligence engine */
+/** True when entity is the Cell2 Core system substrate */
 export function isCell2CoreFocus(convo) {
   if (!convo) return false;
   if (convo.id === CELL2_CORE_ID) return true;
   if (String(convo.name || "").trim().toLowerCase() === "cell2 core") return true;
-  return getFocusType(convo) === "self-intelligence";
+  return Boolean(convo.system && convo.hidden && convo.id === CELL2_CORE_ID);
+}
+
+/** Visible focuses only — Cell2 Core stays out of sidebar / New Focus */
+export function isVisibleFocus(convo) {
+  if (!convo) return false;
+  if (isCell2CoreFocus(convo)) return false;
+  if (convo.hidden === true || convo.system === true && convo.id === CELL2_CORE_ID)
+    return false;
+  return true;
+}
+
+export function normalizeCertainty(value) {
+  const v = String(value || "")
+    .toLowerCase()
+    .trim();
+  return CERTAINTY_LEVELS.includes(v) ? v : "unknown";
+}
+
+/** Ensure entity.certainty exists (default unknown). Strips archetype. */
+export function ensureCertainty(convo) {
+  if (!convo || typeof convo !== "object") return "unknown";
+  convo.certainty = normalizeCertainty(convo.certainty);
+  if (convo.archetype !== undefined) delete convo.archetype;
+  return convo.certainty;
+}
+
+/**
+ * Classify free text into an intelligence category.
+ * @returns {typeof INTEL_CATEGORIES[number]}
+ */
+export function classifyIntelCategory(text) {
+  const t = String(text || "");
+  if (
+    /\b(doctrine|eternal rule|must always|lane boundar|build protocol|archetype purge|type-only|operator law|never reintroduce|anti[- ]?pattern|regression)\b/i.test(
+      t
+    )
+  ) {
+    return "doctrine";
+  }
+  if (/\b(identity|who (i|they|we) am|self[- ]model|name is|i am)\b/i.test(t)) {
+    return "identity";
+  }
+  if (/\b(grievance|complaint|frustrat|angry|hate|broken promise|betray)\b/i.test(t)) {
+    return "grievance";
+  }
+  if (/\b(prefer|preference|like|dislike|always want|never want)\b/i.test(t)) {
+    return "preference";
+  }
+  if (
+    /\b(relationship|ally|enemy|trust|bond|linked to|works with|reports to)\b/i.test(t)
+  ) {
+    return "relationship";
+  }
+  if (
+    /\b(reality|on disk|in the world|real life|physical|observed|evidence|confirmed fact)\b/i.test(
+      t
+    )
+  ) {
+    return "reality";
+  }
+  return "node_intel";
 }
 
 // archetypeFromType removed; derive model/channel from type field directly
@@ -65,9 +146,9 @@ export function getSealedChannel(focus) {
   if (!focus) return "—";
   const t = getFocusType(focus);
   if (t === "person") return "Open";
-  // Cell2 Core — permanent neural channel
-  if (t === "self-intelligence") {
-    return focus.channel || focus.backend || focus.medium || "Neural";
+  // Cell2 Core — internal system AI
+  if (isCell2CoreFocus(focus)) {
+    return focus.channel || focus.backend || focus.medium || focus.model || "Open";
   }
   // SCROLL / eternal intelligence — Hermes channel by default
   if (t === "eternal-intelligence") {
@@ -127,6 +208,7 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
   let t = type || getFocusType(convo);
   if (t === "ai-node") t = "ai";
   if (t === "broadcast") t = "network";
+  if (t === "self-intelligence") t = "ai";
   const valid = [
     "person",
     "place",
@@ -135,18 +217,18 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
     "idea",
     "network",
     "eternal-intelligence",
-    "self-intelligence",
   ];
   if (!valid.includes(t)) t = "person";
   convo.type = t;
+  ensureCertainty(convo);
 
-  if (convo.type === "self-intelligence") {
-    convo.model = "none";
-    convo.aiSubtype = undefined;
-    convo.backend = "Neural";
-    convo.medium = "Neural";
-    convo.channel = "Neural";
+  if (isCell2CoreFocus(convo)) {
+    convo.type = "ai";
     convo.system = true;
+    convo.hidden = true;
+    convo.model = convo.model || "none";
+    convo.backend = convo.backend || "Open";
+    convo.medium = convo.medium || "Open";
     return convo;
   }
 
@@ -184,8 +266,8 @@ export function applyFocusClassification(convo, { type, aiSubtype, channel, back
 export function sealedChannelLabel(focus) {
   const t = getFocusType(focus);
   const ch = getSealedChannel(focus);
-  if (t === "self-intelligence") {
-    return `Cell2 · ${ch}`;
+  if (isCell2CoreFocus(focus)) {
+    return `Cell2 · system AI`;
   }
   if (t === "eternal-intelligence") {
     return `eternal-intelligence · ${ch}`;
@@ -227,8 +309,9 @@ export function ensureScrollFocus(state) {
 }
 
 /**
- * Seed Cell2 Core — app self-memory / intelligence engine.
- * System focus (not ad-hoc user create). Idempotent.
+ * Seed Cell2 Core — internal AI intelligence substrate.
+ * System-only: type "ai", hidden from sidebar/New Focus, purge-protected.
+ * Idempotent.
  */
 export function ensureCell2CoreFocus(state) {
   if (!state) return null;
@@ -237,58 +320,51 @@ export function ensureCell2CoreFocus(state) {
   if (focus) {
     focus.id = CELL2_CORE_ID;
     focus.name = CELL2_CORE_NAME;
-    focus.type = "self-intelligence";
+    focus.type = "ai";
     focus.system = true;
-    focus.channel = focus.channel || "Neural";
-    focus.backend = focus.backend || "Neural";
-    focus.medium = focus.medium || "Neural";
-    if (!Array.isArray(focus.neuralLog)) focus.neuralLog = [];
+    focus.hidden = true;
+    focus.certainty = normalizeCertainty(focus.certainty || "confirmed");
+    focus.model = focus.model || "none";
+    focus.backend = focus.backend || "Open";
+    focus.medium = focus.medium || "Open";
+    if (!Array.isArray(focus.intelLog)) focus.intelLog = focus.neuralLog || [];
     if (!Array.isArray(focus.messages)) focus.messages = [];
     delete focus.archetype;
+    delete focus.neuralLog;
+    // Never leave Cell2 as the active UI focus
+    if (state.activeId === CELL2_CORE_ID) {
+      state.activeId =
+        state.conversations.find((c) => isVisibleFocus(c))?.id || null;
+    }
     return focus;
   }
   const born = Date.now();
   focus = {
     id: CELL2_CORE_ID,
     name: CELL2_CORE_NAME,
-    type: "self-intelligence",
+    type: "ai",
     system: true,
-    channel: "Neural",
-    medium: "Neural",
-    backend: "Neural",
+    hidden: true,
+    certainty: "confirmed",
     model: "none",
-    pinned: true,
-    tags: ["cell2", "brain", "doctrine"],
+    backend: "Open",
+    medium: "Open",
+    pinned: false,
+    tags: ["cell2", "system", "brain"],
     folderId: null,
     status: "active",
-    neuralLog: [],
+    intelLog: [],
     eventLog: [],
-    messages: [
-      {
-        id: "cell2-m0",
-        role: "grimoire",
-        text:
-          "**Cell2 Core** sealed — Grimoire self-intelligence engine.\n\n" +
-          "This Focus is permanent neural substrate. Speak doctrine, interaction truths, " +
-          "or anti-regression patterns. **Cast Spell** writes to the intelligence vault " +
-          "(`[NEURAL_EVENT]` · `[DOCTRINE]` · `[REGRESSION]`) — not the generic spell queue.\n\n" +
-          "Open **BRAIN** in the header to read the append-only log.",
-        ts: born,
-        kind: "system",
-      },
-    ],
+    messages: [],
     createdAt: born,
     updatedAt: born,
     lastViewedAt: born,
   };
-  // Keep system cores near the top after SCROLL if present
-  const scrollIdx = state.conversations.findIndex((c) =>
-    /^scroll$/i.test(c.name || c.id || "")
-  );
-  if (scrollIdx >= 0) {
-    state.conversations.splice(scrollIdx + 1, 0, focus);
-  } else {
-    state.conversations = [focus, ...state.conversations];
+  // Keep at end of array (not visible; not competing for top slot)
+  state.conversations = [...state.conversations, focus];
+  if (state.activeId === CELL2_CORE_ID) {
+    state.activeId =
+      state.conversations.find((c) => isVisibleFocus(c))?.id || null;
   }
   return focus;
 }
@@ -1523,6 +1599,7 @@ export function loadState() {
 /** Normalize Focus org QoL fields (pin, tags, folder, timestamps). */
 export function ensureFocusOrgFields(convo, { assignFolder = true } = {}) {
   if (!convo || typeof convo !== "object") return convo;
+  ensureCertainty(convo);
   if (typeof convo.pinned !== "boolean") convo.pinned = false;
   if (!Array.isArray(convo.tags)) {
     convo.tags = Array.isArray(convo.tags) ? convo.tags : [];

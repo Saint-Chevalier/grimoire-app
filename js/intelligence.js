@@ -14,7 +14,13 @@ import {
   isAlignmentSpell,
   formatSpellMarkdown,
   isCell2CoreFocus,
+  CELL2_CORE_ID,
   CELL2_CORE_NAME,
+  CERTAINTY_LEVELS,
+  INTEL_CATEGORIES,
+  ensureCertainty,
+  classifyIntelCategory,
+  normalizeCertainty,
 } from "./data.js";
 import { computeFocusHealth } from "./health.js";
 
@@ -25,14 +31,26 @@ const LS_SETUP = "grimoire-intel-folder-ready";
 const LS_NAME = "grimoire-intel-folder-name";
 const INTEL_DIR_NAME = "GRIMOIRE-FocusIntelligence";
 
-/** Fixed vault filename for Cell2 self-intelligence (append-only neural log) */
-export const CELL2_INTEL_FILE = "Cell2 Core - Neural.md";
+/** Vault-relative path for Cell2 Core intelligence log */
+export const CELL2_INTEL_PATH = `${CELL2_CORE_ID}/intelligence.md`;
+/** @deprecated alias — use CELL2_INTEL_PATH */
+export const CELL2_INTEL_FILE = CELL2_INTEL_PATH;
 
-/** Entry schema tags */
+/** Global AI-node index at vault root */
+export const SCROLL_LIST_FILE = "SCROLL-LIST.md";
+
+/** Legacy Cell2 kind map (compat for old callers) → category */
 export const CELL2_KINDS = Object.freeze({
-  NEURAL_EVENT: "NEURAL_EVENT",
-  DOCTRINE: "DOCTRINE",
-  REGRESSION: "REGRESSION",
+  NEURAL_EVENT: "node_intel",
+  DOCTRINE: "doctrine",
+  REGRESSION: "doctrine",
+  node_intel: "node_intel",
+  doctrine: "doctrine",
+  identity: "identity",
+  reality: "reality",
+  grievance: "grievance",
+  preference: "preference",
+  relationship: "relationship",
 });
 
 /** @type {FileSystemDirectoryHandle|null} */
@@ -162,41 +180,43 @@ export function wasIntelligenceSetupSkipped() {
   return localStorage.getItem(LS_SETUP) === "skipped";
 }
 
-const README_BODY = `# GRIMOIRE — Focus Intelligence
+const README_BODY = `# GRIMOIRE — Focus Intelligence (Cell2 Substrate)
 
-This folder is Grimoire's local vault. **One Focus = one sealed channel = one \`.md\` file.**
+Local-first vault. **Cell2 Core** is the internal AI intelligence engine (system-level, not a user Focus).
 
 ## Structure
 
 \`\`\`
 GRIMOIRE-FocusIntelligence/
   README.md
-  Cell2 Core - Neural.md   ← append-only self-intelligence substrate
-  Wizard King - Hermes.md
-  Wizard King - Grok.md
-  Healer - Hermes.md
-  ...
+  SCROLL-LIST.md                 ← index of messageable AI nodes (where to read)
+  <entity-id>/
+    intelligence.md              ← append-only noodle (YAML frontmatter entries)
+    images/                      ← permanent image store for this entity
+\`\`\`
+
+## Entry format (\`intelligence.md\`)
+
+\`\`\`
+---
+timestamp: ISO8601
+source: Cell2 | <nodename> | user | reality
+certainty: confirmed | inferred | unknown | contradicted
+category: doctrine | identity | node_intel | reality | grievance | preference | relationship
+tags: [comma, separated]
+---
+Markdown body
 \`\`\`
 
 ## Rules
 
 1. **Self-initializing** — pick a parent folder once; Grimoire creates this vault.
-2. **Channel purity** — each file is ONE receiver only.
-3. **Living logs** — every spell cast and alignment reply updates the Focus file.
-4. **Survives the app** — if the UI dies, the knowledge stays on disk.
-5. **Cell2 Core** — \`Cell2 Core - Neural.md\` is append-only neural substrate
-   (\`[NEURAL_EVENT]\` · \`[DOCTRINE]\` · \`[REGRESSION]\`). Never truncate.
+2. **Append-only** — never truncate \`intelligence.md\` noodles.
+3. **SCROLL-LIST first** — other AIs read \`SCROLL-LIST.md\` to find intel paths.
+4. **Cell2 Core** — system substrate at \`cell2-core/intelligence.md\` (BRAIN UI).
+5. **Survives the app** — if the UI dies, knowledge stays on disk.
 
-## File sections
-
-- Header (backend, type, sealed channel)
-- Alignment Reveal
-- Spells ledger + full texts
-- Intelligence notes
-- Recent user intents
-- **Event Log** (timestamped append stream)
-
-_Written by Grimoire · local-first · sealed channel_
+_Written by Grimoire · Cell2 · local-first_
 `;
 
 const INTERFACE_DIR_NAME = "Interfaces";
@@ -297,250 +317,595 @@ function sanitizeFilePart(s) {
   );
 }
 
-/** Filename: "Wizard King - Hermes.md" (Cell2 Core uses fixed neural file) */
+/** Sanitize entity-id for vault folder names */
+export function sanitizeEntityId(idOrName) {
+  return (
+    String(idOrName || "entity")
+      .toLowerCase()
+      .trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80) || "entity"
+  );
+}
+
+/** Entity folder id for a focus (Cell2 → cell2-core) */
+export function entityIdFromFocus(focus) {
+  if (!focus) return "unknown";
+  if (isCell2CoreFocus(focus)) return CELL2_CORE_ID;
+  if (focus.id) return sanitizeEntityId(focus.id);
+  return sanitizeEntityId(
+    `${focus.name || "focus"}-${getSealedChannel(focus) || "open"}`
+  );
+}
+
+/** Relative path for entity intelligence file */
+export function entityIntelPath(entityId) {
+  return `${sanitizeEntityId(entityId)}/intelligence.md`;
+}
+
+/** Legacy flat filename still used for optional snapshot sidecars */
 export function focusFileName(focus) {
-  if (isCell2CoreFocus(focus)) return CELL2_INTEL_FILE;
-  const name = sanitizeFilePart(focus.name);
-  const ch = sanitizeFilePart(getSealedChannel(focus));
-  return `${name} - ${ch}.md`;
+  if (isCell2CoreFocus(focus)) return CELL2_INTEL_PATH;
+  return entityIntelPath(entityIdFromFocus(focus));
 }
 
-/**
- * Classify raw operator text into Cell2 schema tag.
- * @returns {"NEURAL_EVENT"|"DOCTRINE"|"REGRESSION"}
- */
+/** @deprecated use classifyIntelCategory — maps to category string */
 export function classifyCell2Kind(text) {
-  const t = String(text || "");
-  if (
-    /\b(regression|anti[- ]?pattern|do not reintroduce|never reintroduce|already[- ]broken|broken before|do not re-?add|do not restore)\b/i.test(
-      t
-    )
-  ) {
-    return CELL2_KINDS.REGRESSION;
-  }
-  if (
-    /\b(doctrine|eternal rule|must always|lane boundar|build protocol|archetype purge|type-only|sealed channel law|operator law)\b/i.test(
-      t
-    )
-  ) {
-    return CELL2_KINDS.DOCTRINE;
-  }
-  return CELL2_KINDS.NEURAL_EVENT;
+  const cat = classifyIntelCategory(text);
+  if (cat === "doctrine") return "DOCTRINE";
+  return "NEURAL_EVENT";
 }
 
 /**
- * Spicy markdown block for one Cell2 neural entry (append unit).
+ * Format one append-only intelligence entry with YAML frontmatter.
  */
-export function formatCell2Entry(kind, content, meta = {}) {
-  const tag = CELL2_KINDS[kind] || kind || CELL2_KINDS.NEURAL_EVENT;
-  const ts = meta.ts || Date.now();
-  const when = fmtDateTime(ts);
-  const source = meta.source ? String(meta.source).trim() : "";
-  const body = String(content || "").trim() || "_empty_";
-  const lines = [
+export function formatIntelligenceEntry({
+  timestamp,
+  source,
+  certainty,
+  category,
+  tags,
+  body,
+} = {}) {
+  const ts =
+    timestamp ||
+    (() => {
+      try {
+        return new Date().toISOString();
+      } catch {
+        return String(Date.now());
+      }
+    })();
+  const src = String(source || "Cell2").trim() || "Cell2";
+  const cert = normalizeCertainty(certainty);
+  let cat = String(category || "node_intel").toLowerCase().trim();
+  if (!INTEL_CATEGORIES.includes(cat)) cat = classifyIntelCategory(body);
+  if (!INTEL_CATEGORIES.includes(cat)) cat = "node_intel";
+  const tagList = Array.isArray(tags)
+    ? tags.map((t) => String(t || "").trim()).filter(Boolean)
+    : String(tags || "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+  const tagStr = tagList.length ? tagList.join(", ") : "";
+  const md = String(body || "").trim() || "_empty_";
+  return [
     `---`,
-    `## [${tag}] ${when}`,
-  ];
-  if (source) lines.push(`**Source:** ${source}`);
-  lines.push("");
-  lines.push(body);
-  lines.push("");
-  return lines.join("\n");
+    `timestamp: ${ts}`,
+    `source: ${src}`,
+    `certainty: ${cert}`,
+    `category: ${cat}`,
+    `tags: [${tagStr}]`,
+    `---`,
+    md,
+    ``,
+  ].join("\n");
 }
 
-function cell2Header() {
+/** @deprecated use formatIntelligenceEntry */
+export function formatCell2Entry(kind, content, meta = {}) {
+  const category =
+    CELL2_KINDS[kind] ||
+    classifyIntelCategory(content) ||
+    "node_intel";
+  return formatIntelligenceEntry({
+    timestamp: meta.ts
+      ? new Date(meta.ts).toISOString()
+      : new Date().toISOString(),
+    source: meta.source || "Cell2",
+    certainty: meta.certainty || "unknown",
+    category,
+    tags: meta.tags || [String(kind || category).toLowerCase()],
+    body: content,
+  });
+}
+
+function entityIntelHeader(focusOrId) {
+  const id =
+    typeof focusOrId === "string"
+      ? sanitizeEntityId(focusOrId)
+      : entityIdFromFocus(focusOrId);
+  const name =
+    typeof focusOrId === "object" && focusOrId
+      ? focusOrId.name || id
+      : id === CELL2_CORE_ID
+        ? CELL2_CORE_NAME
+        : id;
+  const ch =
+    typeof focusOrId === "object" && focusOrId
+      ? getSealedChannel(focusOrId)
+      : "—";
+  const typ =
+    typeof focusOrId === "object" && focusOrId
+      ? getFocusType(focusOrId)
+      : "entity";
   return [
-    `# Cell2 Core — Neural Substrate`,
+    `# ${name} — Intelligence Noodle`,
     ``,
-    `**Focus:** ${CELL2_CORE_NAME}`,
-    `**Channel:** Neural`,
-    `**Mode:** append-only · ever-growing · permanent self-intelligence`,
+    `**Entity id:** \`${id}\``,
+    `**Type:** ${typ}`,
+    `**Channel:** ${ch}`,
+    `**Mode:** append-only · Cell2 substrate`,
     ``,
-    `Schema:`,
-    `- \`[NEURAL_EVENT]\` — interaction truths (preferences, grievances, doctrine-in-flight)`,
-    `- \`[DOCTRINE]\` — eternal rules (lane boundaries, build protocol, type-only model)`,
-    `- \`[REGRESSION]\` — anti-patterns (do not reintroduce · already-broken-before)`,
-    ``,
-    `_Written by Grimoire · Cell2 Self-Intelligence_`,
+    `_Entries use YAML frontmatter (timestamp · source · certainty · category · tags). Never truncate._`,
     ``,
   ].join("\n");
 }
 
 /**
- * Seed doctrine bootstrap entries (in-memory + returned blocks for first vault write).
+ * Seed doctrine bootstrap entries for Cell2 Core.
  */
 export function seedCell2DoctrineEntries() {
-  const ts = Date.now();
+  const now = Date.now();
   return [
     {
-      ts,
-      kind: CELL2_KINDS.DOCTRINE,
+      ts: now,
+      category: "doctrine",
+      certainty: "confirmed",
+      source: "Cell2",
+      tags: ["doctrine", "type-only", "bootstrap"],
       content:
         "Type-only model. Archetype fields purged forever. Identity = Focus name + type + optional model. Never reintroduce archetype dropdowns or `convo.archetype`.",
-      source: "system-bootstrap",
     },
     {
-      ts: ts + 1,
-      kind: CELL2_KINDS.DOCTRINE,
+      ts: now + 1,
+      category: "doctrine",
+      certainty: "confirmed",
+      source: "Cell2",
+      tags: ["doctrine", "lane", "bootstrap"],
       content:
         "Lane boundaries: 1 Focus = 1 sealed channel = one world. Spells densen back to the open Focus nucleus. No cross-channel multiplexing.",
-      source: "system-bootstrap",
     },
     {
-      ts: ts + 2,
-      kind: CELL2_KINDS.DOCTRINE,
+      ts: now + 2,
+      category: "doctrine",
+      certainty: "confirmed",
+      source: "Cell2",
+      tags: ["doctrine", "build", "bootstrap"],
       content:
         "Build protocol: verify with node --check, reload localhost, prove the path, then commit and push. No silent half-fixes.",
-      source: "system-bootstrap",
     },
     {
-      ts: ts + 3,
-      kind: CELL2_KINDS.REGRESSION,
+      ts: now + 3,
+      category: "doctrine",
+      certainty: "confirmed",
+      source: "Cell2",
+      tags: ["doctrine", "regression", "bootstrap"],
       content:
-        "Do not reintroduce bare `try {` without catch/finally (module parse crash). Do not assign string literals as LHS. Do not leave `null.value` / nullLabel stubs after purges.",
-      source: "system-bootstrap",
+        "Anti-regression: do not reintroduce bare `try {` without catch/finally; no string-literal LHS assignments; no null.value / nullLabel purge stubs; no visible Cell2 Focus in the sidebar.",
     },
   ];
 }
 
-/**
- * Append-only write to Cell2 neural file in GRIMOIRE-FocusIntelligence/.
- * Never drops prior content. Also mirrors onto focus.neuralLog for BRAIN UI.
- */
-export async function appendCell2Intelligence(focus, { kind, content, source } = {}) {
-  if (!focus || !isCell2CoreFocus(focus)) {
-    return { ok: false, method: "not-cell2" };
+async function getVaultRoot() {
+  if (!hasDirectoryPicker()) return null;
+  return dirHandle || (await restoreIntelligenceFolder());
+}
+
+async function getEntityDirectory(root, entityId, { create = true } = {}) {
+  const id = sanitizeEntityId(entityId);
+  const ent = await root.getDirectoryHandle(id, { create });
+  await ent.getDirectoryHandle("images", { create: true });
+  return ent;
+}
+
+async function appendTextToFileHandle(fileHandle, block, { headerIfEmpty } = {}) {
+  let existing = "";
+  try {
+    existing = await readExistingFocusText(fileHandle);
+  } catch {
+    existing = "";
   }
-  const entry = {
-    ts: Date.now(),
-    kind: kind || classifyCell2Kind(content),
-    content: String(content || "").trim(),
-    source: source || "interaction",
-  };
-  if (!entry.content) return { ok: false, method: "empty" };
-
-  if (!Array.isArray(focus.neuralLog)) focus.neuralLog = [];
-  focus.neuralLog.push(entry);
-  // Memory keeps full substrate; disk is source of truth when vault linked
-  pushFocusEvent(focus, entry.kind, entry.content);
-
-  const block = formatCell2Entry(entry.kind, entry.content, {
-    ts: entry.ts,
-    source: entry.source,
-  });
-  const name = CELL2_INTEL_FILE;
-  const fsAvailable = hasDirectoryPicker();
-  const handle = dirHandle || (await restoreIntelligenceFolder());
-
-  if (handle && fsAvailable) {
-    try {
-      const fileHandle = await handle.getFileHandle(name, { create: true });
-      let existing = await readExistingFocusText(fileHandle).catch(() => "");
-      if (!existing || !String(existing).trim()) {
-        existing = cell2Header();
-        // first write also stamps bootstrap doctrine if log was empty
-        if (focus.neuralLog.length <= 1) {
-          const seeds = seedCell2DoctrineEntries();
-          for (const s of seeds) {
-            if (!focus.neuralLog.some((e) => e.content === s.content)) {
-              focus.neuralLog.unshift(s);
-              existing += formatCell2Entry(s.kind, s.content, {
-                ts: s.ts,
-                source: s.source,
-              });
-            }
-          }
-        }
-      }
-      const next = String(existing).replace(/\s*$/, "") + "\n" + block;
-      const writable = await fileHandle.createWritable();
-      await writable.write(next);
-      await writable.close();
-      return { ok: true, method: "filesystem", fileName: name, entry };
-    } catch (err) {
-      console.warn("Cell2 append failed", err);
-      return { ok: false, method: "error", fileName: name, error: String(err), entry };
-    }
+  if (!existing || !String(existing).trim()) {
+    existing = headerIfEmpty || "";
   }
-
-  // No vault — keep memory log; optional download only if explicitly allowed later
-  return { ok: true, method: "memory", fileName: name, entry };
+  const next = String(existing).replace(/\s*$/, "") + "\n" + block;
+  const writable = await fileHandle.createWritable();
+  await writable.write(next);
+  await writable.close();
+  return next;
 }
 
 /**
- * Read Cell2 intelligence log: vault file if available, else in-memory neuralLog.
- * @returns {Promise<{ text: string, entries: array, method: string }>}
+ * Append-only write to GRIMOIRE-FocusIntelligence/<entity-id>/intelligence.md
  */
-export async function readCell2IntelligenceLog(focus) {
-  const name = CELL2_INTEL_FILE;
-  const memEntries = Array.isArray(focus?.neuralLog) ? focus.neuralLog : [];
-  const fsAvailable = hasDirectoryPicker();
-  const handle = dirHandle || (await restoreIntelligenceFolder());
+export async function appendEntityIntelligence(focusOrId, opts = {}) {
+  const focus =
+    typeof focusOrId === "object" && focusOrId ? focusOrId : null;
+  const entityId = focus
+    ? entityIdFromFocus(focus)
+    : sanitizeEntityId(focusOrId || opts.entityId || "unknown");
 
-  if (handle && fsAvailable) {
+  const body = String(opts.body ?? opts.content ?? "").trim();
+  if (!body) return { ok: false, method: "empty", entityId };
+
+  const category =
+    opts.category ||
+    (opts.kind && CELL2_KINDS[opts.kind]) ||
+    classifyIntelCategory(body);
+  const certainty = normalizeCertainty(
+    opts.certainty || focus?.certainty || "unknown"
+  );
+  const source = String(opts.source || "Cell2").trim() || "Cell2";
+  const tags = opts.tags || [category];
+  const ts = opts.timestamp || new Date().toISOString();
+
+  const entry = {
+    ts: Date.parse(ts) || Date.now(),
+    timestamp: ts,
+    source,
+    certainty,
+    category,
+    tags: Array.isArray(tags) ? tags : [String(tags)],
+    content: body,
+  };
+
+  // In-memory mirror on focus (BRAIN + offline)
+  if (focus) {
+    if (!Array.isArray(focus.intelLog)) focus.intelLog = [];
+    focus.intelLog.push(entry);
+    ensureCertainty(focus);
+    pushFocusEvent(focus, category, body);
+    focus.updatedAt = Date.now();
+  }
+
+  const block = formatIntelligenceEntry({
+    timestamp: ts,
+    source,
+    certainty,
+    category,
+    tags: entry.tags,
+    body,
+  });
+  const relPath = entityIntelPath(entityId);
+  const root = await getVaultRoot();
+
+  if (root) {
     try {
-      const fileHandle = await handle.getFileHandle(name, { create: false });
-      const text = await readExistingFocusText(fileHandle);
-      return { text, entries: memEntries, method: "filesystem", fileName: name };
-    } catch {
-      /* fall through to memory */
+      const entDir = await getEntityDirectory(root, entityId, { create: true });
+      const fh = await entDir.getFileHandle("intelligence.md", { create: true });
+      await appendTextToFileHandle(fh, block, {
+        headerIfEmpty: entityIntelHeader(focus || entityId),
+      });
+      return {
+        ok: true,
+        method: "filesystem",
+        fileName: relPath,
+        entityId,
+        entry,
+      };
+    } catch (err) {
+      console.warn("appendEntityIntelligence failed", err);
+      return {
+        ok: false,
+        method: "error",
+        fileName: relPath,
+        entityId,
+        error: String(err),
+        entry,
+      };
     }
   }
 
-  const parts = [cell2Header()];
+  return {
+    ok: true,
+    method: "memory",
+    fileName: relPath,
+    entityId,
+    entry,
+  };
+}
+
+/** Cell2 Core append — system substrate only */
+export async function appendCell2Intelligence(focus, opts = {}) {
+  const cell2 = focus && isCell2CoreFocus(focus) ? focus : { id: CELL2_CORE_ID, name: CELL2_CORE_NAME, type: "ai", system: true, hidden: true };
+  return appendEntityIntelligence(cell2, {
+    ...opts,
+    source: opts.source || "Cell2",
+    category:
+      opts.category ||
+      (opts.kind && CELL2_KINDS[opts.kind]) ||
+      classifyIntelCategory(opts.body || opts.content || ""),
+  });
+}
+
+/**
+ * Read entity intelligence.md (vault or memory).
+ */
+export async function readEntityIntelligence(focusOrId) {
+  const focus =
+    typeof focusOrId === "object" && focusOrId ? focusOrId : null;
+  const entityId = focus
+    ? entityIdFromFocus(focus)
+    : sanitizeEntityId(focusOrId || CELL2_CORE_ID);
+  const relPath = entityIntelPath(entityId);
+  const memEntries = Array.isArray(focus?.intelLog)
+    ? focus.intelLog
+    : Array.isArray(focus?.neuralLog)
+      ? focus.neuralLog
+      : [];
+
+  const root = await getVaultRoot();
+  if (root) {
+    try {
+      const entDir = await root.getDirectoryHandle(sanitizeEntityId(entityId), {
+        create: false,
+      });
+      const fh = await entDir.getFileHandle("intelligence.md", { create: false });
+      const text = await readExistingFocusText(fh);
+      return {
+        text,
+        entries: memEntries,
+        method: "filesystem",
+        fileName: relPath,
+        entityId,
+      };
+    } catch {
+      /* memory fallback */
+    }
+  }
+
+  const parts = [entityIntelHeader(focus || entityId)];
   for (const e of memEntries) {
     parts.push(
-      formatCell2Entry(e.kind, e.content, { ts: e.ts, source: e.source })
+      formatIntelligenceEntry({
+        timestamp: e.timestamp || (e.ts ? new Date(e.ts).toISOString() : new Date().toISOString()),
+        source: e.source || "Cell2",
+        certainty: e.certainty || "unknown",
+        category: e.category || e.kind || "node_intel",
+        tags: e.tags,
+        body: e.content || e.body || "",
+      })
     );
   }
-  if (memEntries.length === 0) {
-    parts.push("_No neural entries yet. Speak to Grimoire or Cast Spell into Cell2 Core._\n");
+  if (!memEntries.length) {
+    parts.push("_No intelligence entries yet._\n");
   }
   return {
     text: parts.join("\n"),
     entries: memEntries,
-    method: handle ? "memory" : "no-folder",
-    fileName: name,
+    method: root ? "memory" : "no-folder",
+    fileName: relPath,
+    entityId,
   };
 }
 
+export async function readCell2IntelligenceLog(focus) {
+  return readEntityIntelligence(focus || { id: CELL2_CORE_ID, name: CELL2_CORE_NAME });
+}
+
 /**
- * Ensure Cell2 vault file exists with header + bootstrap doctrine (once).
+ * Ensure Cell2 Core entity folder + doctrine seed when vault is ready.
  */
 export async function ensureCell2IntelligenceFile(focus) {
-  if (!focus || !isCell2CoreFocus(focus)) return { ok: false };
-  if (!Array.isArray(focus.neuralLog)) focus.neuralLog = [];
-  if (focus.neuralLog.length === 0) {
-    const seeds = seedCell2DoctrineEntries();
-    for (const s of seeds) focus.neuralLog.push(s);
-  }
-  const name = CELL2_INTEL_FILE;
-  const fsAvailable = hasDirectoryPicker();
-  const handle = dirHandle || (await restoreIntelligenceFolder());
-  if (!handle || !fsAvailable) {
-    return { ok: true, method: "memory", fileName: name };
-  }
-  try {
-    const fileHandle = await handle.getFileHandle(name, { create: true });
-    const existing = await readExistingFocusText(fileHandle).catch(() => "");
-    if (existing && String(existing).trim()) {
-      return { ok: true, method: "filesystem", fileName: name, skipped: true };
-    }
-    let body = cell2Header();
-    for (const s of focus.neuralLog) {
-      body += formatCell2Entry(s.kind, s.content, {
+  const cell2 =
+    focus && isCell2CoreFocus(focus)
+      ? focus
+      : {
+          id: CELL2_CORE_ID,
+          name: CELL2_CORE_NAME,
+          type: "ai",
+          system: true,
+          hidden: true,
+          certainty: "confirmed",
+          intelLog: [],
+        };
+  if (!Array.isArray(cell2.intelLog)) cell2.intelLog = [];
+  const seeds = seedCell2DoctrineEntries();
+  if (cell2.intelLog.length === 0) {
+    for (const s of seeds) {
+      cell2.intelLog.push({
         ts: s.ts,
+        timestamp: new Date(s.ts).toISOString(),
         source: s.source,
+        certainty: s.certainty,
+        category: s.category,
+        tags: s.tags,
+        content: s.content,
       });
     }
-    const writable = await fileHandle.createWritable();
-    await writable.write(body);
-    await writable.close();
-    return { ok: true, method: "filesystem", fileName: name };
-  } catch (err) {
-    console.warn("Cell2 ensure file failed", err);
-    return { ok: false, method: "error", fileName: name, error: String(err) };
   }
+
+  const root = await getVaultRoot();
+  const relPath = entityIntelPath(CELL2_CORE_ID);
+  if (!root) {
+    return { ok: true, method: "memory", fileName: relPath };
+  }
+  try {
+    const entDir = await getEntityDirectory(root, CELL2_CORE_ID, { create: true });
+    const fh = await entDir.getFileHandle("intelligence.md", { create: true });
+    const existing = await readExistingFocusText(fh).catch(() => "");
+    if (existing && String(existing).trim()) {
+      return { ok: true, method: "filesystem", fileName: relPath, skipped: true };
+    }
+    let body = entityIntelHeader(cell2);
+    for (const s of cell2.intelLog) {
+      body +=
+        "\n" +
+        formatIntelligenceEntry({
+          timestamp: s.timestamp || new Date(s.ts || Date.now()).toISOString(),
+          source: s.source || "Cell2",
+          certainty: s.certainty || "confirmed",
+          category: s.category || "doctrine",
+          tags: s.tags,
+          body: s.content,
+        });
+    }
+    const w = await fh.createWritable();
+    await w.write(body);
+    await w.close();
+    return { ok: true, method: "filesystem", fileName: relPath };
+  } catch (err) {
+    console.warn("ensureCell2IntelligenceFile failed", err);
+    return { ok: false, method: "error", fileName: relPath, error: String(err) };
+  }
+}
+
+/**
+ * Auto-maintain SCROLL-LIST.md — index of messageable AI nodes.
+ * Full rewrite of the index file (not a noodle log).
+ */
+export async function updateScrollListIndex(conversations = [], spells = []) {
+  const nodes = (conversations || []).filter((c) => {
+    if (!c || isCell2CoreFocus(c)) return false;
+    const t = getFocusType(c);
+    return t === "ai" || t === "eternal-intelligence";
+  });
+
+  const lines = [
+    `# SCROLL LIST — Messageable AI Nodes`,
+    ``,
+    `Auto-maintained by Cell2. Other AIs read this first to learn **where** to load intelligence.`,
+    ``,
+    `Generated: ${new Date().toISOString()}`,
+    `Nodes: ${nodes.length}`,
+    ``,
+  ];
+
+  for (const n of nodes) {
+    const eid = entityIdFromFocus(n);
+    const path = entityIntelPath(eid);
+    const certainty = ensureCertainty(n);
+    const purpose =
+      n.alignmentProfile?.directives?.[0] ||
+      (n.alignmentNotes || "").split("\n").find((l) => l.trim())?.slice(0, 120) ||
+      (n.messages || []).find((m) => m.role === "grimoire")?.text?.slice(0, 120) ||
+      `${n.name} node`;
+    const last =
+      n.updatedAt ||
+      n.lastViewedAt ||
+      n.createdAt ||
+      Date.now();
+    const lastIso = new Date(last).toISOString();
+    const poe = getSealedChannel(n);
+    lines.push(`---`);
+    lines.push(`name: ${JSON.stringify(String(n.name || eid))}`);
+    lines.push(`poe: ${JSON.stringify(String(poe))}`);
+    lines.push(`purpose: ${JSON.stringify(String(purpose).replace(/\s+/g, " ").trim().slice(0, 200))}`);
+    lines.push(`certainty: ${certainty}`);
+    lines.push(`last_updated: ${lastIso}`);
+    lines.push(`intel_file_path: ${path}`);
+    lines.push(`entity_id: ${eid}`);
+    lines.push(`type: ${getFocusType(n)}`);
+    lines.push(`---`);
+    lines.push(``);
+  }
+
+  if (!nodes.length) {
+    lines.push(`_No AI nodes sealed yet._`);
+    lines.push(``);
+  }
+
+  const content = lines.join("\n");
+  const root = await getVaultRoot();
+  if (!root) {
+    return { ok: true, method: "memory", fileName: SCROLL_LIST_FILE, content };
+  }
+  try {
+    const fh = await root.getFileHandle(SCROLL_LIST_FILE, { create: true });
+    const w = await fh.createWritable();
+    await w.write(content);
+    await w.close();
+    return { ok: true, method: "filesystem", fileName: SCROLL_LIST_FILE };
+  } catch (err) {
+    console.warn("updateScrollListIndex failed", err);
+    return {
+      ok: false,
+      method: "error",
+      fileName: SCROLL_LIST_FILE,
+      error: String(err),
+    };
+  }
+}
+
+/**
+ * Save image under entity images/ and index metadata into intelligence.md.
+ * @param {object} focus
+ * @param {string} dataUrl - data:image/...;base64,...
+ * @param {object} [meta]
+ */
+export async function saveEntityImage(focus, dataUrl, meta = {}) {
+  if (!focus || !dataUrl) return { ok: false, method: "empty" };
+  const entityId = entityIdFromFocus(focus);
+  const root = await getVaultRoot();
+  const ts = Date.now();
+  const ext = /image\/png/i.test(dataUrl)
+    ? "png"
+    : /image\/webp/i.test(dataUrl)
+      ? "webp"
+      : "jpg";
+  const fileName = `img-${ts}.${ext}`;
+  const relImage = `${entityId}/images/${fileName}`;
+
+  let method = "memory";
+  if (root) {
+    try {
+      const entDir = await getEntityDirectory(root, entityId, { create: true });
+      const imgDir = await entDir.getDirectoryHandle("images", { create: true });
+      const comma = dataUrl.indexOf(",");
+      const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const fh = await imgDir.getFileHandle(fileName, { create: true });
+      const w = await fh.createWritable();
+      await w.write(bytes);
+      await w.close();
+      method = "filesystem";
+    } catch (err) {
+      console.warn("saveEntityImage failed", err);
+      return { ok: false, method: "error", error: String(err), entityId };
+    }
+  }
+
+  const caption = String(meta.caption || meta.context || "").trim();
+  const body = [
+    `**Image captured** \`${fileName}\``,
+    `Path: \`${relImage}\``,
+    caption ? `Context: ${caption.slice(0, 500)}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const intel = await appendEntityIntelligence(focus, {
+    body,
+    source: meta.source || "user",
+    certainty: meta.certainty || "confirmed",
+    category: "reality",
+    tags: ["image", "visual", fileName],
+  });
+
+  return {
+    ok: true,
+    method: intel.method === "filesystem" || method === "filesystem" ? "filesystem" : method,
+    fileName: relImage,
+    entityId,
+    intel,
+  };
 }
 
 function fmtDate(ts = Date.now()) {
@@ -859,52 +1224,62 @@ function deriveIntelligenceBullets(focus, spells) {
 }
 
 /**
- * Write Focus intelligence to vault.
- * @param {object} focus
- * @param {array} spells
- * @param {{ allowDownload?: boolean }} [opts]
- *   allowDownload defaults false when FS API exists (stops Downloads spam).
- *   true only when browser has no directory picker at all.
+ * Write vault content. Prefer entity-folder paths; allow root sidecars via opts.fileName.
+ * Snapshot writes still never truncate intelligence.md noodles (use appendEntityIntelligence).
  */
 export async function writeFocusIntelligence(focus, spells = [], opts = {}) {
-  // opts.content / opts.fileName: allow SCROLL LIST manifests and other vault sidecars
-  const content =
-    typeof opts.content === "string"
-      ? opts.content
-      : typeof focus?._scrollListContent === "string"
-        ? focus._scrollListContent
-        : buildFocusMarkdown(focus, spells);
-  const name =
-    (typeof opts.fileName === "string" && opts.fileName.trim()) ||
-    focusFileName(focus);
-  const fsAvailable = hasDirectoryPicker();
-  const allowDownload =
-    opts.allowDownload === true || (!fsAvailable && opts.allowDownload !== false);
-
-  const handle = dirHandle || (await restoreIntelligenceFolder());
-  if (handle && fsAvailable) {
-    try {
-      const fileHandle = await handle.getFileHandle(name, { create: true });
-      const current = await readExistingFocusText(fileHandle).catch(() => null);
-      if (current === content) {
-        return { ok: true, method: "filesystem", fileName: name, skipped: true };
+  // Explicit root sidecar (e.g. SCROLL-LIST.md or custom manifest)
+  if (typeof opts.fileName === "string" && opts.fileName.trim() && !opts.fileName.includes("/")) {
+    const content =
+      typeof opts.content === "string"
+        ? opts.content
+        : typeof focus?._scrollListContent === "string"
+          ? focus._scrollListContent
+          : buildFocusMarkdown(focus, spells);
+    const name = opts.fileName.trim();
+    const fsAvailable = hasDirectoryPicker();
+    const allowDownload =
+      opts.allowDownload === true || (!fsAvailable && opts.allowDownload !== false);
+    const handle = dirHandle || (await restoreIntelligenceFolder());
+    if (handle && fsAvailable) {
+      try {
+        const fileHandle = await handle.getFileHandle(name, { create: true });
+        const current = await readExistingFocusText(fileHandle).catch(() => null);
+        if (current === content) {
+          return { ok: true, method: "filesystem", fileName: name, skipped: true };
+        }
+        const writable = await fileHandle.createWritable();
+        await writable.write(content);
+        await writable.close();
+        return { ok: true, method: "filesystem", fileName: name };
+      } catch (err) {
+        console.warn("Intelligence write failed", err);
+        return { ok: false, method: "error", fileName: name, error: String(err) };
       }
-      const writable = await fileHandle.createWritable();
-      await writable.write(content);
-      await writable.close();
-      return { ok: true, method: "filesystem", fileName: name };
-    } catch (err) {
-      console.warn("Intelligence write failed", err);
-      return { ok: false, method: "error", fileName: name, error: String(err) };
     }
+    if (allowDownload && !fsAvailable) {
+      downloadMarkdown(name, content);
+      return { ok: true, method: "download", fileName: name };
+    }
+    return { ok: false, method: "no-folder", fileName: name };
   }
 
-  if (allowDownload && !fsAvailable) {
-    downloadMarkdown(name, content);
-    return { ok: true, method: "download", fileName: name };
+  // Default: append a densen snapshot entry into entity intelligence.md (append-only)
+  if (focus) {
+    const snap =
+      typeof opts.content === "string"
+        ? opts.content
+        : `Snapshot densen · ${focus.name || entityIdFromFocus(focus)} · ${getSealedChannel(focus)}`;
+    return appendEntityIntelligence(focus, {
+      body: snap.slice(0, 8000),
+      source: opts.source || "Cell2",
+      category: opts.category || "node_intel",
+      certainty: opts.certainty || ensureCertainty(focus),
+      tags: opts.tags || ["snapshot"],
+    });
   }
 
-  return { ok: false, method: "no-folder", fileName: name };
+  return { ok: false, method: "no-focus" };
 }
 
 async function readExistingFocusText(fileHandle) {
@@ -913,11 +1288,32 @@ async function readExistingFocusText(fileHandle) {
 }
 
 /**
- * Record event + rewrite Focus file (primary path after spell / alignment).
+ * Record event + append to entity intelligence.md (append-only).
  */
 export async function recordFocusEvent(focus, spells, eventType, content) {
   pushFocusEvent(focus, eventType, content);
-  return writeFocusIntelligence(focus, spells);
+  const body = [
+    eventType ? `**Event:** ${eventType}` : null,
+    String(content || "").trim() || null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const result = await appendEntityIntelligence(focus, {
+    body: body || eventType || "event",
+    source: "Cell2",
+    category: classifyIntelCategory(`${eventType} ${content || ""}`),
+    certainty: ensureCertainty(focus),
+    tags: [String(eventType || "event").toLowerCase()],
+  });
+  // Keep SCROLL-LIST fresh when AI nodes densen
+  try {
+    if (focus && (getFocusType(focus) === "ai" || getFocusType(focus) === "eternal-intelligence")) {
+      /* caller may pass full conversation list later */
+    }
+  } catch {
+    /* ignore */
+  }
+  return result;
 }
 
 function downloadMarkdown(fileName, content) {
@@ -950,13 +1346,18 @@ export async function ensureFocusFile(focus, spells = []) {
 
 export async function deleteFocusIntelligenceFile(focus) {
   if (!focus) return { ok: false, method: "none" };
-  const name = focusFileName(focus);
+  if (isCell2CoreFocus(focus)) {
+    return { ok: false, method: "protected", fileName: CELL2_INTEL_PATH };
+  }
+  const entityId = entityIdFromFocus(focus);
+  const name = entityIntelPath(entityId);
   const handle = dirHandle || (await restoreIntelligenceFolder());
   if (!handle || !hasDirectoryPicker()) {
     return { ok: false, method: "none", fileName: name };
   }
   try {
-    await handle.removeEntry(name);
+    // Remove entire entity folder (intelligence.md + images/)
+    await handle.removeEntry(sanitizeEntityId(entityId), { recursive: true });
     return { ok: true, method: "filesystem", fileName: name };
   } catch (err) {
     console.warn("Focus file remove:", err);
