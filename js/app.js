@@ -56,13 +56,17 @@ import {
   ensureCertainty,
   classifyIntelCategory,
   normalizeCertainty,
-} from "./data.js?v=cell2-1";
+  parseBusCommand,
+  makeBusMessage,
+  resolveBusChannel,
+  BUS_CHANNEL_ROUTES,
+} from "./data.js?v=cell2-2";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=cell2-1";
+} from "./stars.js?v=cell2-2";
 import {
   initUniverse,
   setFocusUniverse,
@@ -70,7 +74,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=cell2-1";
+} from "./universe.js?v=cell2-2";
 import {
   chooseIntelligenceFolder,
   ensureIntelligenceFolder,
@@ -97,12 +101,21 @@ import {
   CELL2_KINDS,
   CELL2_INTEL_PATH,
   SCROLL_LIST_FILE,
-} from "./intelligence.js?v=cell2-1";
+  readScrollListNodes,
+  resolveScrollNode,
+  registerBusNode,
+  densenBusMessage,
+  searchBusLocal,
+  relayIntelBetweenFocuses,
+  getBusActivityLog,
+  pushBusActivity,
+  buildScrollNodesFromConversations,
+} from "./intelligence.js?v=cell2-2";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=cell2-1";
+} from "./health.js?v=cell2-2";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -244,6 +257,8 @@ const els = {
   brainBody: $("#brain-body"),
   brainSub: $("#brain-sub"),
   btnBrainClose: $("#btn-brain-close"),
+  busStatus: $("#bus-status"),
+  busStatusValue: $("#bus-status-value"),
   toast: $("#toast"),
 };
 
@@ -1380,11 +1395,11 @@ function renderChat() {
   }
   setChatControlsEnabled(true);
   if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) {
-    els.chatInput.placeholder = `Speak about ${convo.name} — or Cast Spell for Alignment Reveal…`;
+    els.chatInput.placeholder = `Speak about ${convo.name} — /bus list · Cast Spell for Alignment Reveal…`;
   } else if (isAiNode(convo)) {
-    els.chatInput.placeholder = `Speak about ${convo.name} — densen intel or Cast Spell…`;
+    els.chatInput.placeholder = `Speak about ${convo.name} — /bus <node> <msg> · Cast Spell…`;
   } else {
-    els.chatInput.placeholder = `Speak to Grimoire about ${convo.name}…`;
+    els.chatInput.placeholder = `Speak about ${convo.name}… · /bus list · talk to <node>`;
   }
 
   if (!convo.messages.length) {
@@ -2850,11 +2865,407 @@ function addGrimoireMessage(text, kind = "system") {
   renderIntelAtlas(convo);
 }
 
+/**
+ * Cell2 Message Bus — local-only routing against SCROLL-LIST.md.
+ * No external network unless op === search (even then: vault-local first).
+ */
+function setBusStatus(label) {
+  if (els.busStatusValue) els.busStatusValue.textContent = label || "idle";
+  if (els.busStatus) {
+    els.busStatus.title = `Cell2 Message Bus · ${label || "idle"}`;
+    els.busStatus.dataset.state = label || "idle";
+  }
+}
+
+function findFocusForBusNode(node) {
+  if (!node) return null;
+  if (node.focusId) {
+    const byId = state.conversations.find((c) => c.id === node.focusId);
+    if (byId) return byId;
+  }
+  const name = String(node.name || "").toLowerCase();
+  return (
+    state.conversations.find(
+      (c) =>
+        isVisibleFocus(c) &&
+        String(c.name || "").toLowerCase() === name &&
+        (!node.poe ||
+          getSealedChannel(c).toLowerCase() === String(node.poe).toLowerCase())
+    ) ||
+    state.conversations.find(
+      (c) => isVisibleFocus(c) && String(c.name || "").toLowerCase() === name
+    ) ||
+    null
+  );
+}
+
+async function handleBusCommand(convo, cmd, rawText) {
+  if (!convo || !cmd) return;
+
+  // User bubble always recorded on current focus
+  convo.messages = convo.messages || [];
+  convo.messages.push({
+    id: uid("msg"),
+    role: "user",
+    text: rawText,
+    ts: Date.now(),
+    kind: "bus",
+  });
+  touchFocus(convo);
+
+  setBusStatus(cmd.op || "route");
+
+  try {
+    if (cmd.op === "list") {
+      const { nodes, method } = await readScrollListNodes(state.conversations);
+      await updateScrollListIndex(state.conversations, state.spells);
+      const lines = [
+        `**Cell2 Message Bus · SCROLL LIST** (${nodes.length} node(s) · ${method})`,
+        ``,
+        ...nodes.map(
+          (n, i) =>
+            `${i + 1}. **${n.name}** · \`${n.poe || "Open"}\` · ${n.certainty || "unknown"}\n   ${n.purpose || "—"}\n   \`${n.intel_file_path || "—"}\``
+        ),
+        ``,
+        `_Local-only registry. Route: \`/bus <name> <message>\` · Search vault: \`/bus search <q>\`_`,
+      ];
+      if (!nodes.length) {
+        lines.splice(
+          2,
+          0,
+          "_No nodes yet. Seal AI focuses or \`/bus NewNode hello\` to register._"
+        );
+      }
+      pushBusActivity({
+        kind: "list",
+        summary: `Listed ${nodes.length} SCROLL node(s)`,
+        localOnly: true,
+      });
+      addBusReply(convo, lines.join("\n"));
+      setBusStatus("idle");
+      return;
+    }
+
+    if (cmd.op === "search") {
+      // Opt-in search — still local vault by default (no external network)
+      const q = cmd.query || "";
+      if (!q) {
+        addBusReply(
+          convo,
+          "**Bus search** needs a query.\nUsage: `/bus search <terms>` — searches SCROLL + vault intel only (no external API)."
+        );
+        setBusStatus("idle");
+        return;
+      }
+      const { hits } = await searchBusLocal(q, state.conversations);
+      const lines = [
+        `**Cell2 Bus · local vault search** for “${q}”`,
+        `_No external network call. Opt-in search stays inside GRIMOIRE-FocusIntelligence._`,
+        ``,
+        hits.length
+          ? hits
+              .slice(0, 24)
+              .map(
+                (h, i) =>
+                  `${i + 1}. **${h.name}** · ${h.poe || "—"} · ${h.match || "hit"}\n   ${(h.purpose || "").slice(0, 160)}`
+              )
+              .join("\n")
+          : "_No local hits._",
+      ];
+      addBusReply(convo, lines.join("\n"));
+      setBusStatus("idle");
+      return;
+    }
+
+    if (cmd.op === "ask_cell2") {
+      const q = cmd.query || rawText;
+      const { hits } = await searchBusLocal(q, state.conversations);
+      const cell2 = ensureCell2CoreFocus(state);
+      const answer = [
+        `**Cell2** (local vault only)`,
+        ``,
+        hits.length
+          ? hits
+              .slice(0, 12)
+              .map(
+                (h) =>
+                  `• **${h.name}** · ${h.poe || "Open"} — ${(h.purpose || "").slice(0, 140)}`
+              )
+              .join("\n")
+          : "_No matching vault intelligence. Densen more via chat/Cast Spell, or `/bus list`._",
+        ``,
+        `_External web search is not used. Explicit opt-in only via \`/bus search\` (still vault-local)._`,
+      ].join("\n");
+      await densenBusMessage(cell2, q, {
+        kind: "ask_cell2",
+        from: "user",
+        channel: "Neural",
+        source: "user",
+        category: "node_intel",
+      });
+      pushBusActivity({
+        kind: "ask_cell2",
+        summary: `ask cell2: ${q.slice(0, 100)}`,
+        localOnly: true,
+      });
+      addBusReply(convo, answer);
+      setBusStatus("idle");
+      return;
+    }
+
+    if (cmd.op === "route") {
+      await handleBusRoute(convo, cmd);
+      setBusStatus("idle");
+      return;
+    }
+
+    addBusReply(convo, "Unknown bus command. Try `/bus list` or `/bus <node> <message>`.");
+  } catch (err) {
+    console.error("[bus]", err);
+    addBusReply(
+      convo,
+      `**Bus error:** ${err?.message || err}\nVault may be unlinked — click 📁 to attach GRIMOIRE-FocusIntelligence/.`
+    );
+  }
+  setBusStatus("idle");
+  persist();
+  renderChat();
+  renderConvoList();
+}
+
+function addBusReply(convo, text) {
+  if (!convo) return;
+  convo.messages = convo.messages || [];
+  convo.messages.push({
+    id: uid("msg"),
+    role: "grimoire",
+    text,
+    ts: Date.now(),
+    kind: "bus",
+  });
+  touchFocus(convo);
+  persist();
+  renderChat();
+  renderConvoList();
+  if (els.brainOverlay && !els.brainOverlay.hasAttribute("hidden")) {
+    renderBrainLog();
+  }
+}
+
+async function handleBusRoute(convo, cmd) {
+  const { nodes } = await readScrollListNodes(state.conversations);
+  // Prefer multi-word resolution when rest provided
+  let node = null;
+  let message = cmd.message || "";
+  if (cmd.nodeNameRest) {
+    node = resolveScrollNode(cmd.nodeName, nodes, {
+      nodeNameRest: cmd.nodeNameRest,
+    });
+    if (node?._resolvedMessage != null) {
+      message = node._resolvedMessage || message;
+    }
+  }
+  if (!node) {
+    node = resolveScrollNode(cmd.nodeName, nodes, {
+      nodeNameRest: cmd.nodeNameRest,
+    });
+  }
+
+  // Also try matching live focuses when SCROLL empty/miss
+  if (!node) {
+    const q = String(cmd.nodeName || "").toLowerCase();
+    const focusHit = state.conversations.find(
+      (c) =>
+        isVisibleFocus(c) &&
+        (String(c.name || "").toLowerCase() === q ||
+          String(c.name || "").toLowerCase().includes(q))
+    );
+    if (focusHit) {
+      node = {
+        name: focusHit.name,
+        poe: getSealedChannel(focusHit),
+        purpose: "",
+        certainty: ensureCertainty(focusHit),
+        intel_file_path: entityIntelPath(entityIdFromFocus(focusHit)),
+        entity_id: entityIdFromFocus(focusHit),
+        focusId: focusHit.id,
+        type: getFocusType(focusHit),
+      };
+    }
+  }
+
+  if (!node) {
+    // Not found — register new bus node (ask POE lightly, default Open)
+    const name = String(cmd.nodeName || "").trim();
+    pushBusActivity({
+      kind: "miss",
+      summary: `Unknown node “${name}” — registering on SCROLL LIST`,
+      nodeName: name,
+      localOnly: true,
+    });
+    const reg = await registerBusNode(
+      {
+        name,
+        poe: "Open",
+        purpose: message
+          ? `Registered via bus: ${message.slice(0, 120)}`
+          : `Bus node registered by operator`,
+        type: "ai",
+      },
+      state.conversations
+    );
+    // Create a real Focus so routing has a home
+    let focus = createConversation({
+      name,
+      type: "ai",
+      model: "none",
+    });
+    if (!focus) {
+      focus = state.conversations.find(
+        (c) => String(c.name || "").toLowerCase() === name.toLowerCase()
+      );
+    }
+    if (focus && message) {
+      await densenBusMessage(focus, message, {
+        kind: "route",
+        channel: getSealedChannel(focus),
+        from: "user",
+      });
+    }
+    await updateScrollListIndex(state.conversations, state.spells);
+    addBusReply(
+      convo,
+      [
+        `**Bus · node not on SCROLL LIST** — registered **${name}**.`,
+        `POE defaulted to **Open** (edit Focus to seal Hermes/Grok/etc.).`,
+        `Entity folder: \`${reg?.node?.intel_file_path || entityIntelPath(name)}\``,
+        message
+          ? `Message densened to the new node vault.`
+          : `Send a message: \`/bus ${name} <your message>\``,
+        ``,
+        `_Local-only. No external lookup._`,
+      ].join("\n")
+    );
+    if (focus) {
+      state.activeId = focus.id;
+      persist();
+      renderAll();
+    }
+    return;
+  }
+
+  const target = findFocusForBusNode(node);
+  const channel = node.poe || (target ? getSealedChannel(target) : "Open");
+  const payload =
+    message ||
+    `(bus ping from **${convo.name}** — no body; operator opened channel)`;
+
+  // Densen into target vault
+  await densenBusMessage(target || node, payload, {
+    kind: "route",
+    channel,
+    from: convo.name || "user",
+    source: "user",
+  });
+
+  // Cross-focus: densen target intel into current session when routing away
+  let relayNote = "";
+  if (target && target.id !== convo.id) {
+    const relay = await relayIntelBetweenFocuses(target, convo, payload);
+    if (relay?.text) relayNote = `\n\n---\n${relay.text}`;
+  }
+
+  // Switch active focus to target when it exists
+  if (target) {
+    state.activeId = target.id;
+    target.messages = target.messages || [];
+    target.messages.push({
+      id: uid("msg"),
+      role: "user",
+      text: payload,
+      ts: Date.now(),
+      kind: "bus-route",
+    });
+    target.messages.push({
+      id: uid("msg"),
+      role: "grimoire",
+      text: [
+        `**Cell2 Message Bus** delivered to **${target.name}** · \`${channel}\`.`,
+        `Intelligence densened → \`${node.intel_file_path || entityIntelPath(entityIdFromFocus(target))}\`.`,
+        `Craft a spell for this channel or keep talking — local vault only.`,
+      ].join("\n"),
+      ts: Date.now(),
+      kind: "bus",
+    });
+    touchFocus(target);
+  }
+
+  await updateScrollListIndex(state.conversations, state.spells);
+
+  addBusReply(
+    convo,
+    [
+      `**Bus route** → **${node.name}** · \`${channel}\``,
+      payload ? `> ${payload.slice(0, 400)}` : "",
+      target
+        ? `Switched active Focus to **${target.name}**. Message densened to vault.`
+        : `Node is on SCROLL LIST but has no live Focus yet — vault entry densened at \`${node.intel_file_path}\`.`,
+      relayNote,
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+
+  persist();
+  renderAll();
+}
+
+/**
+ * When user mentions another Focus by name, auto-relay that node's intel (local).
+ */
+async function maybeBusAutoRelay(convo, userText) {
+  if (!convo || !userText || userText.length < 4) return null;
+  const { nodes } = await readScrollListNodes(state.conversations);
+  const lower = userText.toLowerCase();
+  const hits = [];
+  for (const n of nodes) {
+    const nm = String(n.name || "").trim();
+    if (!nm || nm.toLowerCase() === String(convo.name || "").toLowerCase())
+      continue;
+    if (nm.length < 3) continue;
+    if (lower.includes(nm.toLowerCase())) {
+      const focus = findFocusForBusNode(n);
+      if (focus && focus.id !== convo.id) hits.push(focus);
+    }
+  }
+  if (!hits.length) return null;
+  const parts = [];
+  for (const f of hits.slice(0, 3)) {
+    const r = await relayIntelBetweenFocuses(f, convo, userText.slice(0, 120));
+    if (r?.text) parts.push(r.text);
+  }
+  if (!parts.length) return null;
+  return {
+    reply: [
+      `**Cell2 bus relay** (local vault — other Focuses mentioned):`,
+      ``,
+      ...parts,
+    ].join("\n"),
+  };
+}
+
 function sendMessage(text) {
   const convo = activeConvo();
   if (!convo || (!text || !text.trim())) return;
 
   const userText = (text || "").trim();
+
+  // === Cell2 Message Bus — local routing (before pulse / normal chat) ===
+  const busCmd = parseBusCommand(userText);
+  if (busCmd) {
+    handleBusCommand(convo, busCmd, userText);
+    return;
+  }
 
   // === PULSE PROTOCOL (Focus-specific only; no multi-entity, no cross-write) ===
   if (isPulse(userText)) {
@@ -3034,6 +3445,22 @@ function sendMessage(text) {
     preface: `Interaction on Focus **${convo.name}** (${getFocusType(convo)} · ${getSealedChannel(convo)})`,
     certainty: ensureCertainty(convo),
   });
+
+  // Cross-Focus bus relay when other SCROLL nodes are named in chat
+  maybeBusAutoRelay(convo, userText)
+    .then((relay) => {
+      if (!relay?.reply) return;
+      convo.messages.push({
+        id: uid("msg"),
+        role: "grimoire",
+        text: relay.reply,
+        ts: Date.now(),
+        kind: "bus-relay",
+      });
+      persist();
+      renderChat();
+    })
+    .catch((err) => console.warn("[bus] auto-relay", err));
 
   persist();
   renderChat();
@@ -4956,16 +5383,46 @@ async function renderBrainLog(focus) {
   els.brainBody.innerHTML = `<p class="brain-loading">Loading Cell2 intelligence…</p>`;
   try {
     const { text, method, fileName, entries } = await readCell2IntelligenceLog(cell2);
+    const busLog = getBusActivityLog();
     if (els.brainSub) {
       const n = Array.isArray(entries) ? entries.length : 0;
-      els.brainSub.textContent = `${fileName || CELL2_INTEL_PATH} · ${n} memory entries · ${method}`;
+      els.brainSub.textContent = `${fileName || CELL2_INTEL_PATH} · ${n} memory · bus ${busLog.length} · ${method}`;
     }
+    els.brainBody.innerHTML = "";
+
+    // Bus activity section (local message bus)
+    const busSec = document.createElement("section");
+    busSec.className = "brain-bus-section";
+    const busTitle = document.createElement("h3");
+    busTitle.className = "brain-bus-title";
+    busTitle.textContent = "Cell2 Message Bus";
+    busSec.appendChild(busTitle);
+    if (!busLog.length) {
+      const empty = document.createElement("p");
+      empty.className = "brain-empty";
+      empty.textContent =
+        "No bus events yet. Try /bus list or /bus <node> <message> in chat.";
+      busSec.appendChild(empty);
+    } else {
+      const ul = document.createElement("ul");
+      ul.className = "brain-bus-log";
+      for (const ev of busLog.slice().reverse().slice(0, 40)) {
+        const li = document.createElement("li");
+        li.className = "brain-bus-item";
+        li.innerHTML = `<span class="brain-bus-kind">${escapeHtml(ev.kind)}</span> <span class="brain-bus-time">${escapeHtml(
+          (ev.timestamp || "").replace("T", " ").slice(0, 19)
+        )}</span><div class="brain-bus-summary">${escapeHtml(ev.summary || "")}</div>`;
+        ul.appendChild(li);
+      }
+      busSec.appendChild(ul);
+    }
+    els.brainBody.appendChild(busSec);
+
     const pre = document.createElement("pre");
     pre.className = "brain-log";
     pre.textContent = text || "_empty_";
-    els.brainBody.innerHTML = "";
     els.brainBody.appendChild(pre);
-    els.brainBody.scrollTop = els.brainBody.scrollHeight;
+    els.brainBody.scrollTop = 0;
   } catch (err) {
     els.brainBody.innerHTML = `<p class="brain-empty">Could not load Cell2 log: ${escapeHtml(String(err?.message || err))}</p>`;
   }

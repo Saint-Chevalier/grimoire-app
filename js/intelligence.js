@@ -14,6 +14,7 @@ import {
   isAlignmentSpell,
   formatSpellMarkdown,
   isCell2CoreFocus,
+  isVisibleFocus,
   CELL2_CORE_ID,
   CELL2_CORE_NAME,
   CERTAINTY_LEVELS,
@@ -21,8 +22,17 @@ import {
   ensureCertainty,
   classifyIntelCategory,
   normalizeCertainty,
+  resolveBusChannel,
+  makeBusMessage,
 } from "./data.js";
 import { computeFocusHealth } from "./health.js";
+
+/** In-memory bus activity (BRAIN bus log) — append-only, capped */
+const BUS_ACTIVITY_CAP = 120;
+/** @type {array} */
+let busActivityLog = [];
+/** Memory fallback when vault not linked */
+let scrollListMemoryNodes = [];
 
 const IDB_NAME = "grimoire-intel-v1";
 const IDB_STORE = "handles";
@@ -766,71 +776,242 @@ export async function ensureCell2IntelligenceFile(focus) {
 }
 
 /**
- * Auto-maintain SCROLL-LIST.md — index of messageable AI nodes.
- * Full rewrite of the index file (not a noodle log).
+ * Push Cell2 Message Bus activity (in-memory; BRAIN panel reads this).
  */
-export async function updateScrollListIndex(conversations = [], spells = []) {
-  const nodes = (conversations || []).filter((c) => {
-    if (!c || isCell2CoreFocus(c)) return false;
-    const t = getFocusType(c);
-    return t === "ai" || t === "eternal-intelligence";
-  });
+export function pushBusActivity(entry) {
+  const row = {
+    ts: Date.now(),
+    timestamp: new Date().toISOString(),
+    kind: entry?.kind || "route",
+    summary: String(entry?.summary || "").trim(),
+    nodeName: entry?.nodeName || "",
+    channel: entry?.channel || "",
+    localOnly: entry?.localOnly !== false,
+    detail: entry?.detail || "",
+  };
+  busActivityLog.push(row);
+  if (busActivityLog.length > BUS_ACTIVITY_CAP) {
+    busActivityLog = busActivityLog.slice(-BUS_ACTIVITY_CAP);
+  }
+  return row;
+}
 
+export function getBusActivityLog() {
+  return busActivityLog.slice();
+}
+
+/** Build SCROLL node records from live conversations */
+export function buildScrollNodesFromConversations(conversations = []) {
+  return (conversations || [])
+    .filter((c) => {
+      if (!c || isCell2CoreFocus(c)) return false;
+      return isVisibleFocus(c);
+    })
+    .map((n) => {
+      const eid = entityIdFromFocus(n);
+      const purpose =
+        n.alignmentProfile?.directives?.[0] ||
+        (n.alignmentNotes || "").split("\n").find((l) => l.trim())?.slice(0, 120) ||
+        (n.messages || []).find((m) => m.role === "grimoire")?.text?.slice(0, 120) ||
+        `${n.name} node`;
+      return {
+        name: String(n.name || eid),
+        poe: resolveBusChannel(n),
+        purpose: String(purpose).replace(/\s+/g, " ").trim().slice(0, 200),
+        certainty: ensureCertainty(n),
+        last_updated: new Date(
+          n.updatedAt || n.lastViewedAt || n.createdAt || Date.now()
+        ).toISOString(),
+        intel_file_path: entityIntelPath(eid),
+        entity_id: eid,
+        type: getFocusType(n),
+        focusId: n.id,
+      };
+    });
+}
+
+function renderScrollListMarkdown(nodes) {
   const lines = [
     `# SCROLL LIST — Messageable AI Nodes`,
     ``,
-    `Auto-maintained by Cell2. Other AIs read this first to learn **where** to load intelligence.`,
+    `Auto-maintained by Cell2 Message Bus. Other AIs read this first to learn **where** to load intelligence.`,
+    `Local-only by default. External search is opt-in via \`/bus search\`.`,
     ``,
     `Generated: ${new Date().toISOString()}`,
     `Nodes: ${nodes.length}`,
     ``,
   ];
-
   for (const n of nodes) {
-    const eid = entityIdFromFocus(n);
-    const path = entityIntelPath(eid);
-    const certainty = ensureCertainty(n);
-    const purpose =
-      n.alignmentProfile?.directives?.[0] ||
-      (n.alignmentNotes || "").split("\n").find((l) => l.trim())?.slice(0, 120) ||
-      (n.messages || []).find((m) => m.role === "grimoire")?.text?.slice(0, 120) ||
-      `${n.name} node`;
-    const last =
-      n.updatedAt ||
-      n.lastViewedAt ||
-      n.createdAt ||
-      Date.now();
-    const lastIso = new Date(last).toISOString();
-    const poe = getSealedChannel(n);
     lines.push(`---`);
-    lines.push(`name: ${JSON.stringify(String(n.name || eid))}`);
-    lines.push(`poe: ${JSON.stringify(String(poe))}`);
-    lines.push(`purpose: ${JSON.stringify(String(purpose).replace(/\s+/g, " ").trim().slice(0, 200))}`);
-    lines.push(`certainty: ${certainty}`);
-    lines.push(`last_updated: ${lastIso}`);
-    lines.push(`intel_file_path: ${path}`);
-    lines.push(`entity_id: ${eid}`);
-    lines.push(`type: ${getFocusType(n)}`);
+    lines.push(`name: ${JSON.stringify(String(n.name || ""))}`);
+    lines.push(`poe: ${JSON.stringify(String(n.poe || "Open"))}`);
+    lines.push(
+      `purpose: ${JSON.stringify(String(n.purpose || "").replace(/\s+/g, " ").trim().slice(0, 200))}`
+    );
+    lines.push(`certainty: ${n.certainty || "unknown"}`);
+    lines.push(`last_updated: ${n.last_updated || new Date().toISOString()}`);
+    lines.push(`intel_file_path: ${n.intel_file_path || ""}`);
+    if (n.entity_id) lines.push(`entity_id: ${n.entity_id}`);
+    if (n.type) lines.push(`type: ${n.type}`);
     lines.push(`---`);
     lines.push(``);
   }
-
   if (!nodes.length) {
-    lines.push(`_No AI nodes sealed yet._`);
+    lines.push(`_No nodes on the bus yet. Use /bus or seal a Focus._`);
     lines.push(``);
   }
+  return lines.join("\n");
+}
 
-  const content = lines.join("\n");
+/**
+ * Parse SCROLL-LIST.md YAML frontmatter blocks into node records.
+ */
+export function parseScrollListMarkdown(text) {
+  const nodes = [];
+  const src = String(text || "");
+  const blocks = src.split(/^---\s*$/m).map((b) => b.trim()).filter(Boolean);
+  let pending = null;
+  for (const block of blocks) {
+    if (!/\bname\s*:/i.test(block) || !/\bpoe\s*:/i.test(block)) continue;
+    const get = (key) => {
+      const re = new RegExp(`^${key}\\s*:\\s*(.*)$`, "im");
+      const m = block.match(re);
+      if (!m) return "";
+      let v = m[1].trim();
+      if (
+        (v.startsWith('"') && v.endsWith('"')) ||
+        (v.startsWith("'") && v.endsWith("'"))
+      ) {
+        try {
+          v = JSON.parse(v.replace(/^'/, '"').replace(/'$/, '"'));
+        } catch {
+          v = v.slice(1, -1);
+        }
+      }
+      return String(v || "").trim();
+    };
+    const name = get("name");
+    if (!name) continue;
+    nodes.push({
+      name,
+      poe: get("poe") || "Open",
+      purpose: get("purpose") || "",
+      certainty: get("certainty") || "unknown",
+      last_updated: get("last_updated") || "",
+      intel_file_path: get("intel_file_path") || "",
+      entity_id: get("entity_id") || "",
+      type: get("type") || "",
+    });
+  }
+  return nodes;
+}
+
+/**
+ * Read master node registry: vault SCROLL-LIST.md, else memory, else conversations.
+ */
+export async function readScrollListNodes(conversations = []) {
+  const fromConvos = buildScrollNodesFromConversations(conversations);
+  const root = await getVaultRoot();
+  if (root) {
+    try {
+      const fh = await root.getFileHandle(SCROLL_LIST_FILE, { create: false });
+      const text = await readExistingFocusText(fh);
+      const parsed = parseScrollListMarkdown(text);
+      if (parsed.length) {
+        // Merge: vault nodes first, fill focusId from conversations when names match
+        const byName = new Map(
+          fromConvos.map((n) => [n.name.toLowerCase(), n])
+        );
+        for (const p of parsed) {
+          const hit = byName.get(String(p.name).toLowerCase());
+          if (hit) {
+            p.focusId = hit.focusId;
+            p.entity_id = p.entity_id || hit.entity_id;
+            p.type = p.type || hit.type;
+          }
+        }
+        scrollListMemoryNodes = parsed;
+        return { nodes: parsed, method: "filesystem", text };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  if (scrollListMemoryNodes.length) {
+    return { nodes: scrollListMemoryNodes, method: "memory" };
+  }
+  scrollListMemoryNodes = fromConvos;
+  return {
+    nodes: fromConvos,
+    method: "conversations",
+    text: renderScrollListMarkdown(fromConvos),
+  };
+}
+
+/**
+ * Resolve nodename against SCROLL list (and optional multi-word rest string).
+ */
+export function resolveScrollNode(nodeName, nodes = [], opts = {}) {
+  const q = String(nodeName || "").trim().toLowerCase();
+  if (!q) return null;
+  const list = nodes || [];
+
+  // Exact
+  let hit = list.find((n) => String(n.name || "").toLowerCase() === q);
+  if (hit) return hit;
+
+  // Multi-word: try longest prefix match from nodeNameRest
+  const rest = String(opts.nodeNameRest || "").trim();
+  if (rest) {
+    const lower = rest.toLowerCase();
+    const ranked = list
+      .map((n) => {
+        const nm = String(n.name || "").toLowerCase();
+        if (lower === nm || lower.startsWith(nm + " ")) {
+          return { n, score: nm.length };
+        }
+        return null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+    if (ranked[0]) {
+      const best = ranked[0];
+      const msg = rest.slice(best.n.name.length).trim();
+      return { ...best.n, _resolvedMessage: msg };
+    }
+  }
+
+  // Starts-with / includes
+  hit = list.find((n) => String(n.name || "").toLowerCase().startsWith(q));
+  if (hit) return hit;
+  hit = list.find((n) => String(n.name || "").toLowerCase().includes(q));
+  return hit || null;
+}
+
+/**
+ * Auto-maintain SCROLL-LIST.md — index of messageable nodes (master registry).
+ * Full rewrite of the index file (not a noodle log).
+ */
+export async function updateScrollListIndex(conversations = [], spells = []) {
+  const nodes = buildScrollNodesFromConversations(conversations);
+  // Merge any bus-only memory nodes not yet focuses
+  for (const m of scrollListMemoryNodes) {
+    if (!nodes.some((n) => n.name.toLowerCase() === String(m.name).toLowerCase())) {
+      nodes.push(m);
+    }
+  }
+  scrollListMemoryNodes = nodes;
+  const content = renderScrollListMarkdown(nodes);
   const root = await getVaultRoot();
   if (!root) {
-    return { ok: true, method: "memory", fileName: SCROLL_LIST_FILE, content };
+    return { ok: true, method: "memory", fileName: SCROLL_LIST_FILE, content, nodes };
   }
   try {
     const fh = await root.getFileHandle(SCROLL_LIST_FILE, { create: true });
     const w = await fh.createWritable();
     await w.write(content);
     await w.close();
-    return { ok: true, method: "filesystem", fileName: SCROLL_LIST_FILE };
+    return { ok: true, method: "filesystem", fileName: SCROLL_LIST_FILE, content, nodes };
   } catch (err) {
     console.warn("updateScrollListIndex failed", err);
     return {
@@ -838,8 +1019,206 @@ export async function updateScrollListIndex(conversations = [], spells = []) {
       method: "error",
       fileName: SCROLL_LIST_FILE,
       error: String(err),
+      nodes,
     };
   }
+}
+
+/**
+ * Register a new bus node into SCROLL-LIST + entity intelligence folder.
+ */
+export async function registerBusNode(
+  { name, poe = "Open", purpose = "", type = "ai" } = {},
+  conversations = []
+) {
+  const clean = String(name || "").trim();
+  if (!clean) return { ok: false, reason: "name-required" };
+  const channel = resolveBusChannel(poe || "Open");
+  const entityId = sanitizeEntityId(`${clean}-${channel}`);
+  const node = {
+    name: clean,
+    poe: channel,
+    purpose: String(purpose || `${clean} bus node`).slice(0, 200),
+    certainty: "unknown",
+    last_updated: new Date().toISOString(),
+    intel_file_path: entityIntelPath(entityId),
+    entity_id: entityId,
+    type: type || "ai",
+  };
+  // Memory registry
+  const idx = scrollListMemoryNodes.findIndex(
+    (n) => n.name.toLowerCase() === clean.toLowerCase()
+  );
+  if (idx >= 0) scrollListMemoryNodes[idx] = { ...scrollListMemoryNodes[idx], ...node };
+  else scrollListMemoryNodes.push(node);
+
+  // Seed entity intelligence file
+  await appendEntityIntelligence(
+    { id: entityId, name: clean, type, backend: channel, medium: channel },
+    {
+      body: `Bus node registered: **${clean}** · POE ${channel}\nPurpose: ${node.purpose}`,
+      source: "Cell2",
+      category: "identity",
+      certainty: "unknown",
+      tags: ["bus", "register", channel],
+    }
+  );
+
+  const scroll = await updateScrollListIndex(conversations);
+  pushBusActivity({
+    kind: "register",
+    summary: `Registered bus node **${clean}** · ${channel}`,
+    nodeName: clean,
+    channel,
+    localOnly: true,
+  });
+  return { ok: true, node, scroll };
+}
+
+/**
+ * Densen a bus message into the target node's intelligence.md (YAML entry).
+ */
+export async function densenBusMessage(nodeOrFocus, message, opts = {}) {
+  const name =
+    typeof nodeOrFocus === "object"
+      ? nodeOrFocus.name || nodeOrFocus.id
+      : String(nodeOrFocus || "");
+  const channel =
+    opts.channel ||
+    (typeof nodeOrFocus === "object"
+      ? resolveBusChannel(nodeOrFocus)
+      : "Open");
+  const body = String(message || opts.body || "").trim();
+  if (!body) return { ok: false, method: "empty" };
+
+  const focusLike =
+    typeof nodeOrFocus === "object" && nodeOrFocus
+      ? nodeOrFocus
+      : {
+          id: sanitizeEntityId(`${name}-${channel}`),
+          name,
+          type: opts.type || "ai",
+          backend: channel,
+          medium: channel,
+        };
+
+  const bus = makeBusMessage({
+    to: name,
+    from: opts.from || "user",
+    body,
+    channel,
+    kind: opts.kind || "route",
+    localOnly: opts.localOnly !== false,
+  });
+
+  const result = await appendEntityIntelligence(focusLike, {
+    body: [
+      `**Cell2 Message Bus** · ${bus.kind}`,
+      `To: **${bus.to}** · Channel: **${bus.channel}** · From: ${bus.from}`,
+      ``,
+      bus.body,
+    ].join("\n"),
+    source: opts.source || "user",
+    category: opts.category || "node_intel",
+    certainty: opts.certainty || "inferred",
+    tags: ["bus", bus.kind, bus.channel].filter(Boolean),
+  });
+
+  pushBusActivity({
+    kind: bus.kind,
+    summary: `Bus → **${name}** · ${channel}: ${body.slice(0, 120)}`,
+    nodeName: name,
+    channel,
+    localOnly: bus.localOnly,
+    detail: body.slice(0, 500),
+  });
+
+  return { ok: true, bus, result };
+}
+
+/**
+ * Local vault search only (no network). Scans SCROLL names + in-memory intel snippets.
+ */
+export async function searchBusLocal(query, conversations = []) {
+  const q = String(query || "").trim().toLowerCase();
+  const { nodes } = await readScrollListNodes(conversations);
+  if (!q) {
+    return { hits: nodes.slice(0, 20), method: "local", query: q };
+  }
+  const hits = [];
+  for (const n of nodes) {
+    const hay = [n.name, n.poe, n.purpose, n.entity_id, n.type]
+      .join(" ")
+      .toLowerCase();
+    if (hay.includes(q)) hits.push({ ...n, match: "scroll" });
+  }
+  for (const c of conversations || []) {
+    if (isCell2CoreFocus(c) || !isVisibleFocus(c)) continue;
+    const log = Array.isArray(c.intelLog) ? c.intelLog : [];
+    for (const e of log.slice(-30)) {
+      const body = String(e.content || e.body || "");
+      if (body.toLowerCase().includes(q)) {
+        hits.push({
+          name: c.name,
+          poe: getSealedChannel(c),
+          purpose: body.slice(0, 160),
+          certainty: e.certainty || "unknown",
+          intel_file_path: entityIntelPath(entityIdFromFocus(c)),
+          focusId: c.id,
+          match: "intel",
+        });
+        break;
+      }
+    }
+  }
+  pushBusActivity({
+    kind: "search_local",
+    summary: `Local bus search: “${query}” → ${hits.length} hit(s)`,
+    localOnly: true,
+    detail: q,
+  });
+  return { hits, method: "local", query: q };
+}
+
+/**
+ * Relay structured intel from source Focus into dest session (local only).
+ * Returns markdown snippet for chat injection — densens into dest vault too.
+ */
+export async function relayIntelBetweenFocuses(sourceFocus, destFocus, hint = "") {
+  if (!sourceFocus || !destFocus) return { ok: false, text: "" };
+  const bits = [];
+  const channel = getSealedChannel(sourceFocus);
+  bits.push(`### Relay from **${sourceFocus.name}** · ${channel}`);
+  if (sourceFocus.alignmentNotes) {
+    bits.push(String(sourceFocus.alignmentNotes).slice(0, 600));
+  }
+  const log = Array.isArray(sourceFocus.intelLog) ? sourceFocus.intelLog : [];
+  const recent = log.slice(-5);
+  for (const e of recent) {
+    bits.push(
+      `- [${e.category || "intel"} · ${e.certainty || "unknown"}] ${String(e.content || "").slice(0, 200)}`
+    );
+  }
+  if (hint) bits.push(`_Hint: ${String(hint).slice(0, 200)}_`);
+  if (bits.length < 2) {
+    bits.push("_No densened intelligence on file yet for this node._");
+  }
+  const text = bits.join("\n");
+  await appendEntityIntelligence(destFocus, {
+    body: text,
+    source: "Cell2",
+    category: "relationship",
+    certainty: "inferred",
+    tags: ["bus", "relay", sourceFocus.name],
+  });
+  pushBusActivity({
+    kind: "relay",
+    summary: `Relay **${sourceFocus.name}** → **${destFocus.name}**`,
+    nodeName: sourceFocus.name,
+    channel,
+    localOnly: true,
+  });
+  return { ok: true, text };
 }
 
 /**

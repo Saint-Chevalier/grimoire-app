@@ -14,6 +14,167 @@ export const MEDIUMS = ["Hermes", "Discord", "LinkedIn", "Text", "Email", "X", "
 /** Canonical purpose string for Alignment Reveal spells */
 export const ALIGNMENT_PURPOSE = "TRANSPARENCY & ALIGNMENT REVEAL";
 
+/**
+ * Cell2 Message Bus — local-only channel routing map.
+ * Keys are sealed-channel / POE labels; values guide densen + delivery framing.
+ */
+export const BUS_CHANNEL_ROUTES = Object.freeze({
+  Hermes: { kind: "ai", delivery: "paste-spell", label: "Hermes" },
+  Claude: { kind: "ai", delivery: "paste-spell", label: "Claude" },
+  ChatGPT: { kind: "ai", delivery: "paste-spell", label: "ChatGPT" },
+  Grok: { kind: "ai", delivery: "paste-spell", label: "Grok" },
+  Local: { kind: "ai", delivery: "paste-spell", label: "Local" },
+  Custom: { kind: "ai", delivery: "paste-spell", label: "Custom" },
+  Discord: { kind: "person", delivery: "message", label: "Discord" },
+  Text: { kind: "person", delivery: "message", label: "Text" },
+  Email: { kind: "person", delivery: "message", label: "Email" },
+  LinkedIn: { kind: "network", delivery: "message", label: "LinkedIn" },
+  X: { kind: "network", delivery: "message", label: "X" },
+  Open: { kind: "open", delivery: "message", label: "Open" },
+  Neural: { kind: "system", delivery: "internal", label: "Neural" },
+});
+
+/** In-memory bus activity kinds (BRAIN bus log) */
+export const BUS_EVENT_KINDS = Object.freeze([
+  "list",
+  "route",
+  "register",
+  "relay",
+  "search_local",
+  "search_external",
+  "miss",
+  "ask_cell2",
+]);
+
+/**
+ * Resolve delivery channel label for a focus/node.
+ */
+export function resolveBusChannel(focusOrPoe) {
+  if (!focusOrPoe) return "Open";
+  if (typeof focusOrPoe === "string") {
+    const key = focusOrPoe.trim();
+    if (BUS_CHANNEL_ROUTES[key]) return key;
+    return key || "Open";
+  }
+  const ch = getSealedChannel(focusOrPoe);
+  if (BUS_CHANNEL_ROUTES[ch]) return ch;
+  return ch || "Open";
+}
+
+/**
+ * Build a bus message record (schema for densen + activity log).
+ */
+export function makeBusMessage({
+  to = "",
+  from = "user",
+  body = "",
+  channel = "Open",
+  kind = "route",
+  localOnly = true,
+} = {}) {
+  return {
+    id: `bus-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    ts: Date.now(),
+    timestamp: new Date().toISOString(),
+    to: String(to || "").trim(),
+    from: String(from || "user").trim(),
+    body: String(body || "").trim(),
+    channel: resolveBusChannel(channel),
+    kind: String(kind || "route"),
+    localOnly: localOnly !== false,
+  };
+}
+
+/**
+ * Parse chat text into a Cell2 bus command.
+ * Supports:
+ *   /bus list
+ *   /bus search <query>
+ *   /bus <nodename> <message>
+ *   talk to <nodename> …
+ *   ask cell2 <question>
+ * @returns {null | { op: string, nodeName?: string, message?: string, query?: string, raw: string }}
+ */
+export function parseBusCommand(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+
+  // Slash commands
+  const busRe = /^\/bus(?:\s+(.*))?$/i;
+  const mBus = raw.match(busRe);
+  if (mBus) {
+    const rest = String(mBus[1] || "").trim();
+    if (!rest || /^list$/i.test(rest)) {
+      return { op: "list", raw };
+    }
+    if (/^search\b/i.test(rest)) {
+      const query = rest.replace(/^search\s*/i, "").trim();
+      return { op: "search", query, raw, external: true };
+    }
+    // /bus Node Name with spaces — take first token group then message
+    // Prefer quoted node: /bus "Wizard King" hello
+    const quoted = rest.match(/^"([^"]+)"\s*(.*)$/);
+    if (quoted) {
+      return {
+        op: "route",
+        nodeName: quoted[1].trim(),
+        message: String(quoted[2] || "").trim(),
+        raw,
+      };
+    }
+    // Multi-word node match deferred to resolver — split first word as hint
+    const sp = rest.indexOf(" ");
+    if (sp < 0) {
+      return { op: "route", nodeName: rest, message: "", raw };
+    }
+    return {
+      op: "route",
+      nodeName: rest.slice(0, sp).trim(),
+      message: rest.slice(sp + 1).trim(),
+      nodeNameRest: rest, // full remainder for multi-word resolve
+      raw,
+    };
+  }
+
+  // Natural language: talk to [node] …
+  const talk = raw.match(/^talk\s+to\s+(.+)$/i);
+  if (talk) {
+    const body = talk[1].trim();
+    const quoted = body.match(/^"([^"]+)"\s*(.*)$/);
+    if (quoted) {
+      return {
+        op: "route",
+        nodeName: quoted[1].trim(),
+        message: String(quoted[2] || "").trim(),
+        raw,
+      };
+    }
+    const sp = body.indexOf(" ");
+    if (sp < 0) return { op: "route", nodeName: body, message: "", raw };
+    return {
+      op: "route",
+      nodeName: body.slice(0, sp).trim(),
+      message: body.slice(sp + 1).trim(),
+      nodeNameRest: body,
+      raw,
+    };
+  }
+
+  // ask cell2 …
+  const ask = raw.match(/^ask\s+cell2\s+(.+)$/i);
+  if (ask) {
+    return { op: "ask_cell2", query: ask[1].trim(), raw };
+  }
+
+  // Explicit external search only
+  const search = raw.match(/^search\s+(.+)$/i);
+  if (search) {
+    return { op: "search", query: search[1].trim(), raw, external: true };
+  }
+
+  return null;
+}
+
 /** Cell2 Self-Intelligence — system AI substrate (not a visible Focus) */
 export const CELL2_CORE_ID = "cell2-core";
 export const CELL2_CORE_NAME = "Cell2 Core";

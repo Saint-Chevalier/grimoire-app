@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=app-boot-fix-2" />
+  <link rel="stylesheet" href="css/styles.css?v=cell2-bus-1" />
 </head>
 <body>
   <!-- WORLD: full-viewport universe canvas (z-index 0; .app is transparent over it) -->
@@ -89,7 +89,16 @@
             <span class="label">Channel</span>
             <span class="sealed-value" id="sealed-channel-value">—</span>
           </div>
-          <button type="button" class="btn-icon btn-brain" id="btn-brain" title="BRAIN — Cell2 Core neural intelligence log (read-only)" aria-label="Open Cell2 Brain log">
+          <div
+            class="bus-status"
+            id="bus-status"
+            title="Cell2 Message Bus — local routing via SCROLL-LIST.md"
+            data-state="idle"
+          >
+            <span class="label">Bus</span>
+            <span class="bus-status-value" id="bus-status-value">idle</span>
+          </div>
+          <button type="button" class="btn-icon btn-brain" id="btn-brain" title="BRAIN — Cell2 Core + Message Bus activity log" aria-label="Open Cell2 Brain log">
             <span aria-hidden="true">BRAIN</span>
           </button>
           <button type="button" class="btn-icon" id="btn-edit-focus" title="Edit Focus — name, type, model" aria-label="Edit Focus">
@@ -398,7 +407,7 @@
   <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="js/app.js?v=app-boot-fix-2"></script>
+  <script type="module" src="js/app.js?v=cell2-bus-1"></script>
   <!--
     Emergency boot (non-module): works even if app.js ES module fails to load.
     Paints focuses from localStorage + Create persists + reloads.

@@ -3496,6 +3496,90 @@ body.universe-view-active .message.system {
   min-width: 5.5rem;
 }
 
+/* Cell2 Message Bus status chip (header) */
+.bus-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  background: rgba(12, 20, 40, 0.55);
+  min-width: 3.2rem;
+  font-size: 0.65rem;
+  line-height: 1.2;
+  color: var(--text-muted);
+}
+.bus-status .label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.58rem;
+  color: var(--text-dim);
+}
+.bus-status-value {
+  color: #93c5fd;
+  font-weight: 600;
+  max-width: 6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bus-status[data-state="route"],
+.bus-status[data-state="register"] {
+  border-color: rgba(167, 139, 250, 0.5);
+}
+.bus-status[data-state="search"],
+.bus-status[data-state="search_local"] {
+  border-color: rgba(251, 191, 36, 0.45);
+}
+
+/* BRAIN · bus activity log */
+.brain-bus-section {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.brain-bus-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  font-family: var(--font-display, Cinzel, serif);
+  letter-spacing: 0.04em;
+  color: #c4b5fd;
+}
+.brain-bus-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 10rem;
+  overflow: auto;
+}
+.brain-bus-item {
+  padding: 0.3rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+.brain-bus-kind {
+  display: inline-block;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.18);
+  color: #93c5fd;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 0.35rem;
+}
+.brain-bus-time {
+  color: var(--text-dim);
+  font-size: 0.62rem;
+}
+.brain-bus-summary {
+  margin-top: 0.15rem;
+  color: rgba(220, 220, 240, 0.9);
+}
+
 /* Legacy edit / other modals still use <dialog class="modal"> */
 .modal {
   border: 1px solid var(--border-strong);
