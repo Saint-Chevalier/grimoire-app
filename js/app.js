@@ -60,13 +60,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=per-focus-vault-3";
+} from "./data.js?v=path-hard-gate-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=per-focus-vault-3";
+} from "./stars.js?v=path-hard-gate-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -74,7 +74,7 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=per-focus-vault-3";
+} from "./universe.js?v=path-hard-gate-1";
 import {
   chooseIntelligenceFolder,
   chooseFocusIntelligenceFolder,
@@ -115,17 +115,21 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=per-focus-vault-3";
+} from "./intelligence.js?v=path-hard-gate-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=per-focus-vault-3";
+} from "./health.js?v=path-hard-gate-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
 /** One-time: grandfather focuses that predate per-focus vault onboarding */
 const PER_FOCUS_VAULT_MIGRATION_KEY = "grimoire-per-focus-vault-migrated-v1";
+/** One-time: hard path gate — lock unused unlinked focuses; exempt actively used legacy */
+const PATH_HARD_GATE_MIGRATION_KEY = "grimoire-path-hard-gate-v1";
+/** Session-only: hide path callout until reload / re-select (lock still holds) */
+const pathCalloutSessionDismissed = new Set();
 
 // ─── State ───
 
@@ -147,36 +151,15 @@ try {
 } catch {
   /* ignore */
 }
-// One-time migration: every focus present on first boot after this fix is legacy.
-// Clear onboarding so SCROLL / Wizard King / etc. never show "Create my path".
-// Do NOT set vaultLinked here — folder icon requires a real per-focus LS handle.
-// Only focuses created AFTER this migration get needsPathOnboarding:true (createConversation).
+// Older migration marker (kept for install history; hard-gate supersedes onboarding flags)
 try {
-  const already = localStorage.getItem(PER_FOCUS_VAULT_MIGRATION_KEY) === "1";
-  if (!already) {
-    for (const c of state.conversations || []) {
-      if (isCell2CoreFocus(c) || !c?.id) continue;
-      c.needsPathOnboarding = false;
-      c.pathOnboardingDismissed = true;
-      // Soft vaultLinked only if a real folder handle was already chosen
-      if (typeof isFocusVaultLinked === "function" && isFocusVaultLinked(c.id)) {
-        c.vaultLinked = true;
-      } else {
-        c.vaultLinked = false;
-      }
-    }
+  if (localStorage.getItem(PER_FOCUS_VAULT_MIGRATION_KEY) !== "1") {
     localStorage.setItem(PER_FOCUS_VAULT_MIGRATION_KEY, "1");
-    try {
-      saveState(state);
-    } catch {
-      /* ignore */
-    }
   }
 } catch {
   /* ignore */
 }
-// Repair: earlier migration set vaultLinked=true on every legacy focus.
-// Strip soft flags unless a confirmed per-focus folder exists (icon gate).
+// Repair soft vaultLinked flags — icon/lock only trust real per-focus handles
 try {
   let repaired = false;
   for (const c of state.conversations || []) {
@@ -192,6 +175,45 @@ try {
     }
   }
   if (repaired) {
+    try {
+      saveState(state);
+    } catch {
+      /* ignore */
+    }
+  }
+} catch {
+  /* ignore */
+}
+// Hard path covenant: unlinked focuses are locked unless actively used legacy (exempt)
+// or system substrate. New focuses always needPathOnboarding + no exempt.
+try {
+  const already = localStorage.getItem(PATH_HARD_GATE_MIGRATION_KEY) === "1";
+  if (!already) {
+    for (const c of state.conversations || []) {
+      if (isCell2CoreFocus(c) || !c?.id) continue;
+      const reallyLinked =
+        typeof isFocusVaultLinked === "function" && isFocusVaultLinked(c.id);
+      if (reallyLinked) {
+        c.vaultLinked = true;
+        c.needsPathOnboarding = false;
+        c.pathOnboardingDismissed = true;
+        c.pathGateExempt = false;
+        continue;
+      }
+      c.vaultLinked = false;
+      // Actively used legacy focuses may keep working without a folder
+      if (c.pathGateExempt === true || focusWasActivelyUsed(c)) {
+        c.pathGateExempt = true;
+        c.needsPathOnboarding = false;
+        c.pathOnboardingDismissed = true;
+      } else {
+        // Unused / brand-new without path → hard lock + callout
+        c.pathGateExempt = false;
+        c.needsPathOnboarding = true;
+        c.pathOnboardingDismissed = false;
+      }
+    }
+    localStorage.setItem(PATH_HARD_GATE_MIGRATION_KEY, "1");
     try {
       saveState(state);
     } catch {
@@ -1003,20 +1025,62 @@ function isFocusPathLinked(c) {
 }
 
 /**
- * Path onboarding callout ONLY for focuses created under the per-focus schema
- * (needsPathOnboarding === true). Legacy/seed focuses never show it.
+ * Legacy focuses that already had real chat/spell use before the hard path gate.
+ * Exempt from lock until they voluntarily link a folder.
+ */
+function focusWasActivelyUsed(c) {
+  if (!c) return false;
+  if (c.system) return true;
+  if (getFocusType(c) === "eternal-intelligence") return true;
+  const msgs = Array.isArray(c.messages) ? c.messages : [];
+  // Real operator participation
+  if (msgs.some((m) => m && m.role === "user")) return true;
+  try {
+    if ((state.spells || []).some((s) => s && s.conversationId === c.id)) return true;
+  } catch {
+    /* ignore */
+  }
+  // Multi-turn grimoire densen (beyond a single seal seed)
+  const substantive = msgs.filter(
+    (m) =>
+      m &&
+      (m.role === "user" || m.role === "grimoire") &&
+      m.kind !== "alignment-directive"
+  );
+  if (substantive.length >= 2) return true;
+  if (msgs.length >= 4) return true;
+  return false;
+}
+
+/**
+ * HARD GATE: focus cannot chat / cast / bus until a vault folder is linked.
+ * System substrate and pathGateExempt (actively used legacy) may operate without a folder.
+ * Dismissing the callout never unlocks — only a confirmed per-focus path does.
+ */
+function isFocusLocked(convo) {
+  if (!convo?.id) return false;
+  if (isCell2CoreFocus(convo)) return false;
+  if (convo.system) return false;
+  if (isFocusPathLinked(convo)) return false;
+  if (convo.pathGateExempt === true) return false;
+  // needsPathOnboarding (new focuses) or any non-exempt focus without a real folder
+  return true;
+}
+
+/**
+ * Sidebar "Create my path" callout while locked.
+ * Session dismiss hides it only until reload/re-select — lock remains.
  */
 function focusNeedsPathOnboarding(c) {
   if (!c || !isVisibleFocus(c) || isCell2CoreFocus(c)) return false;
-  if (c.pathOnboardingDismissed) return false;
-  if (isFocusPathLinked(c)) return false;
-  // Strict: only explicitly flagged new focuses
-  return c.needsPathOnboarding === true;
+  if (!isFocusLocked(c)) return false;
+  if (pathCalloutSessionDismissed.has(c.id)) return false;
+  return true;
 }
 
 /** Subtle glow while path onboarding is active. */
 function focusShowsFreshHighlight(c) {
-  return focusNeedsPathOnboarding(c);
+  return focusNeedsPathOnboarding(c) || isFocusLocked(c);
 }
 
 /** Folder icon / vault-backed class — only when a real folder was linked. */
@@ -1026,11 +1090,8 @@ function focusIsVaultBacked(c) {
 }
 
 function dismissPathOnboarding(focusId) {
-  const c = state.conversations.find((x) => x.id === focusId);
-  if (!c) return;
-  c.pathOnboardingDismissed = true;
-  c.needsPathOnboarding = false;
-  persist();
+  // Session hide only — never unlock. Callout returns on next select/reload.
+  pathCalloutSessionDismissed.add(focusId);
   renderConvoList();
 }
 
@@ -1041,6 +1102,8 @@ function markFocusVaultLinked(focusId) {
   c.vaultLinked = true;
   c.needsPathOnboarding = false;
   c.pathOnboardingDismissed = true;
+  c.pathGateExempt = false;
+  pathCalloutSessionDismissed.delete(focusId);
 }
 
 function buildPathOnboardingCallout(c) {
@@ -1052,9 +1115,9 @@ function buildPathOnboardingCallout(c) {
   const folderHint = focusVaultFolderName(c.name || c.id);
 
   box.innerHTML = `
-    <button type="button" class="focus-path-dismiss" title="Dismiss" aria-label="Dismiss path callout">×</button>
+    <button type="button" class="focus-path-dismiss" title="Hide callout (focus stays locked)" aria-label="Hide path callout">×</button>
     <div class="focus-path-callout-body">
-      <p class="focus-path-text">Link vault folder to write intelligence<br><span class="focus-path-folder-hint">Creates <code>${escapeHtml(folderHint)}/</code></span></p>
+      <p class="focus-path-text">Link vault folder to unlock this focus<br><span class="focus-path-folder-hint">Creates <code>${escapeHtml(folderHint)}/</code> · chat &amp; Cast locked until linked</span></p>
       <button type="button" class="btn-path-link" data-action="link-path">Create my path</button>
     </div>
   `;
@@ -1088,12 +1151,11 @@ async function onChooseFocusPath(focus) {
     const handle = await chooseFocusIntelligenceFolder(focus);
     setVaultFailState(false);
     markFocusVaultLinked(focus.id);
-    toast(`Path ready: ${handle.name}/`, "success");
+    toast(`Path ready: ${handle.name}/ · focus unlocked`, "success");
     activityPing(`✦ Focus vault: ${handle.name}/`);
     await refreshIntelFolderUi();
     persist();
-    renderConvoList();
-    renderChat();
+    renderAll();
   } catch (err) {
     if (err?.name === "AbortError") {
       renderConvoList();
@@ -1104,6 +1166,15 @@ async function onChooseFocusPath(focus) {
     toast("Could not open folder", "");
     renderConvoList();
   }
+}
+
+/** Block chat/cast/bus for locked focuses; toast optional. */
+function refuseIfFocusLocked(convo, { silent = false } = {}) {
+  if (!isFocusLocked(convo)) return false;
+  if (!silent) {
+    toast("Locked — link vault folder first", "");
+  }
+  return true;
 }
 
 function buildFocusRow(c) {
@@ -1562,6 +1633,14 @@ function setChatControlsEnabled(enabled) {
   if (els.btnSend) els.btnSend.disabled = !enabled;
   if (els.btnCast) els.btnCast.disabled = !enabled;
   if (els.btnAttach) els.btnAttach.disabled = !enabled;
+  const bar = els.chatForm?.closest?.(".chat-input-bar") || document.querySelector(".chat-input-bar");
+  if (bar) {
+    bar.classList.toggle("chat-locked", !enabled && !!activeConvo() && isFocusLocked(activeConvo()));
+  }
+  if (els.app) {
+    const locked = !enabled && !!activeConvo() && isFocusLocked(activeConvo());
+    els.app.classList.toggle("focus-path-locked", locked);
+  }
 }
 
 function renderChat() {
@@ -1609,7 +1688,46 @@ function renderChat() {
     const snap = deriveFocusSnapshot(convo, state.spells);
     els.universeStage.textContent = `${getSealedChannel(convo)} · ${snap?.stageName || "VOID"}`;
   }
-  setChatControlsEnabled(true);
+
+  const locked = isFocusLocked(convo);
+  setChatControlsEnabled(!locked);
+  if (locked) {
+    if (els.chatInput) {
+      els.chatInput.value = "";
+      els.chatInput.placeholder = "🔒 Link vault folder to unlock";
+    }
+    if (els.constellationPing) {
+      els.constellationPing.textContent = "Locked — Create my path to unlock";
+    }
+    const lockBanner = document.createElement("div");
+    lockBanner.className = "empty-state focus-lock-banner";
+    lockBanner.innerHTML = `
+      <div class="empty-glyph" aria-hidden="true">🔒</div>
+      <p><strong>${escapeHtml(convo.name)}</strong> is locked.</p>
+      <p class="empty-hint">Link a vault folder via <strong>Create my path</strong> in the sidebar before chat, Cast Spell, or bus routing. BRAIN stays available (read-only).</p>
+      <button type="button" class="btn-path-link btn-path-link-inline" data-action="link-path-active">Create my path</button>
+    `;
+    lockBanner.querySelector('[data-action="link-path-active"]')?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      await onChooseFocusPath(convo);
+    });
+    els.chatMessages.appendChild(lockBanner);
+    // Still show prior messages under the lock banner (read-only history)
+    const visibleMsgs = (convo.messages || []).filter((m) => {
+      if (m.kind === "focus-suggestion") return false;
+      if (m.role === "spell") return false;
+      if (m.kind === "inbound-intel") return false;
+      if (m.role === "system" || m.role === "System") return false;
+      return true;
+    });
+    for (const m of visibleMsgs) {
+      els.chatMessages.appendChild(renderMessage(m));
+    }
+    els.chatMessages.scrollTop = 0;
+    updateUniverseSystemLabels(convo);
+    return;
+  }
+
   if (isAiNode(convo) && !convoAlignmentUnlocked(convo)) {
     els.chatInput.placeholder = `Speak about ${convo.name} — /bus list · Cast Spell for Alignment Reveal…`;
   } else if (isAiNode(convo)) {
@@ -2619,6 +2737,7 @@ function openCraftComplexSpell() {
     toast("Select a Focus first", "");
     return;
   }
+  if (refuseIfFocusLocked(convo)) return;
 
   // Spells panel can stay open; craft UI is the modal (no bottom cut-off)
   setSpellsOpen(true);
@@ -2703,12 +2822,15 @@ function renderLittleChat() {
   const send = els.btnLittleChatSend;
   if (!box) return;
 
-  const enabled = Boolean(convo);
+  const locked = convo ? isFocusLocked(convo) : false;
+  const enabled = Boolean(convo) && !locked;
   if (input) {
     input.disabled = !enabled;
-    input.placeholder = enabled
-      ? `Plan steps for ${convo.name} — complex spell / quantum leap…`
-      : "Select a Focus for complex spell plans…";
+    input.placeholder = locked
+      ? "🔒 Link vault folder to unlock"
+      : enabled
+        ? `Plan steps for ${convo.name} — complex spell / quantum leap…`
+        : "Select a Focus for complex spell plans…";
   }
   if (send) send.disabled = !enabled;
   if (els.complexCraftSub && convo) {
@@ -2876,6 +2998,7 @@ function littleChatReply(convo, userText) {
 function sendLittleChatMessage(text) {
   const convo = activeConvo();
   if (!convo) return;
+  if (refuseIfFocusLocked(convo)) return;
   const userText = String(text || "").trim();
   if (!userText) return;
 
@@ -2976,31 +3099,42 @@ function selectConvo(id) {
     toast("Cell2 Core is system substrate — open BRAIN to read its log", "");
     return;
   }
+  // Re-show path callout when re-selecting a locked focus
+  if (target && isFocusLocked(target)) {
+    pathCalloutSessionDismissed.delete(id);
+  }
   if (state.activeId === id) {
     // Force re-render of this Focus sky even on re-tap
     const snap = deriveFocusSnapshot(activeConvo(), state.spells);
     setFocusUniverse(snap, { warp: false });
     updateUniverseHudChrome(snap);
+    renderChat();
+    renderConvoList();
     return;
   }
   state.activeId = id;
   const convo = activeConvo();
   if (convo) {
-    ensureAlignmentDirective(convo);
+    if (!isFocusLocked(convo)) {
+      ensureAlignmentDirective(convo);
+    }
     ensureFocusOrgFields(convo, { assignFolder: false });
     ensureCertainty(convo);
     convo.lastViewedAt = Date.now();
-    populateDerivedNodesFromSpells(convo);
-    void writeScrollListToVault(convo);
+    if (!isFocusLocked(convo)) {
+      populateDerivedNodesFromSpells(convo);
+      void writeScrollListToVault(convo);
+    }
   }
   persist();
   // Warp to this Focus's universe — always paint starfield for this Focus
   const snap = deriveFocusSnapshot(convo, state.spells);
   setFocusUniverse(snap, { warp: true });
-  // Auto-generate self/user curiosity spells about linked ecosystem nodes
-  if (convo) autoGenerateCuriositySpells(convo, { silentToast: true });
-  // Proactive ENGAGE for nodes this Focus has never engaged
-  if (convo) autoGenerateNodeEngageSpells(convo, { silentToast: true });
+  // No spell auto-gen while locked (covenant: no cast activity without path)
+  if (convo && !isFocusLocked(convo)) {
+    autoGenerateCuriositySpells(convo, { silentToast: true });
+    autoGenerateNodeEngageSpells(convo, { silentToast: true });
+  }
   renderAll();
   updateUniverseHudChrome(snap);
 }
@@ -3027,6 +3161,10 @@ function handleLookAround() {
   const convo = activeConvo();
   if (!convo) {
     addGrimoireMessage("Select a focus first.", "system");
+    return;
+  }
+  if (refuseIfFocusLocked(convo)) {
+    renderChat();
     return;
   }
 
@@ -3117,6 +3255,16 @@ function findFocusForBusNode(node) {
 
 async function handleBusCommand(convo, cmd, rawText) {
   if (!convo || !cmd) return;
+
+  if (isFocusLocked(convo)) {
+    addBusReply(
+      convo,
+      "**Locked — link vault folder first.**\nUse **Create my path** on this focus before `/bus` routing."
+    );
+    setBusStatus("locked");
+    toast("Locked — link vault folder first", "");
+    return;
+  }
 
   // User bubble always recorded on current focus
   convo.messages = convo.messages || [];
@@ -3473,6 +3621,11 @@ async function maybeBusAutoRelay(convo, userText) {
 function sendMessage(text) {
   const convo = activeConvo();
   if (!convo || (!text || !text.trim())) return;
+
+  if (refuseIfFocusLocked(convo)) {
+    renderChat();
+    return;
+  }
 
   const userText = (text || "").trim();
 
@@ -6156,6 +6309,11 @@ function castSpell() {
   const convo = activeConvo();
   if (!convo) return;
 
+  if (refuseIfFocusLocked(convo)) {
+    renderChat();
+    return;
+  }
+
   ensureAlignmentDirective(convo);
 
   const medium = syncMediumFromControls(convo);
@@ -6402,7 +6560,7 @@ function createConversation({ name, type, model } = {}) {
       messages.push({
         id: uid("msg"),
         role: "grimoire",
-        text: `AI Focus sealed: **${cleanName}** (${modelLine}). Speak about this intelligence. Hit **Cast Spell** for Alignment Reveal — then craft words-as-magic for whatever surface you deliver on.`,
+        text: `AI Focus sealed: **${cleanName}** (${modelLine}). **Locked** until you **Create my path** and link a vault folder. Chat, Cast Spell, and bus stay disabled until then.`,
         ts: Date.now(),
         kind: "alignment-directive",
       });
@@ -6418,15 +6576,7 @@ function createConversation({ name, type, model } = {}) {
               : t === "idea"
                 ? "Idea"
                 : "Person"
-        } Focus sealed: **${cleanName}**. Speak about ${
-          t === "place"
-            ? "this location"
-            : t === "thing"
-              ? "this object/system"
-              : t === "idea"
-                ? "this concept"
-                : "them"
-        } and yourself. Cast Spell crafts communication — medium is open.`,
+        } Focus sealed: **${cleanName}**. **Locked** until you **Create my path** and link a vault folder — chat & Cast Spell unlock after the path is set.`,
         ts: Date.now(),
       });
     }
@@ -6453,10 +6603,11 @@ function createConversation({ name, type, model } = {}) {
       pinned: false,
       tags: [],
       folderId: null,
-      // Always onboard: each focus must deliberately choose its own vault path
+      // Hard path gate — model (None/Open) never skips folder covenant
       needsPathOnboarding: true,
       pathOnboardingDismissed: false,
       vaultLinked: false,
+      pathGateExempt: false,
     };
 
     applyFocusClassification(convo, {
@@ -6610,9 +6761,13 @@ els.chatMessages.addEventListener("click", async (e) => {
 
 els.chatForm?.addEventListener("submit", (e) => {
   e.preventDefault();
-  if (!activeConvo()) return;
-  const text = (els.chatInput?.value || "").trim();
   const convo = activeConvo();
+  if (!convo) return;
+  if (refuseIfFocusLocked(convo)) {
+    renderChat();
+    return;
+  }
+  const text = (els.chatInput?.value || "").trim();
   const hasImages = !!(convo?.pendingImages && convo.pendingImages.length);
   if (!text && !hasImages) return;
   els.chatInput.value = "";
@@ -6655,7 +6810,9 @@ els.btnIntelFolder?.addEventListener("click", async () => {
 // Complex spell little chat (spells panel) — separate from main Focus chat
 els.littleChatForm?.addEventListener("submit", (e) => {
   e.preventDefault();
-  if (!activeConvo()) return;
+  const convo = activeConvo();
+  if (!convo) return;
+  if (refuseIfFocusLocked(convo)) return;
   const text = (els.littleChatInput?.value || "").trim();
   if (!text) return;
   if (els.littleChatInput) els.littleChatInput.value = "";
@@ -6677,6 +6834,7 @@ els.btnSpellsTitle?.addEventListener("click", (e) => {
 });
 els.btnCraftComplexSpell?.addEventListener("click", (e) => {
   e.stopPropagation();
+  if (refuseIfFocusLocked(activeConvo())) return;
   openCraftComplexSpell();
 });
 els.btnComplexCraftClose?.addEventListener("click", () => closeComplexCraftDialog());
