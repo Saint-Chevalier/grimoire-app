@@ -60,13 +60,13 @@ import {
   makeBusMessage,
   resolveBusChannel,
   BUS_CHANNEL_ROUTES,
-} from "./data.js?v=vault-gesture-1";
+} from "./data.js?v=per-focus-vault-1";
 import {
   randomStarPosition,
   updateConstellation,
   setFocusMetrics,
   liveCapture,
-} from "./stars.js?v=vault-gesture-1";
+} from "./stars.js?v=per-focus-vault-1";
 import {
   initUniverse,
   setFocusUniverse,
@@ -74,9 +74,10 @@ import {
   universeEvent,
   getUniverseHud,
   universeStage,
-} from "./universe.js?v=vault-gesture-1";
+} from "./universe.js?v=per-focus-vault-1";
 import {
   chooseIntelligenceFolder,
+  chooseFocusIntelligenceFolder,
   ensureIntelligenceFolder,
   writeFocusIntelligence,
   recordFocusEvent,
@@ -85,6 +86,10 @@ import {
   hasDirectoryPicker,
   wasIntelligenceSetupSkipped,
   isIntelligenceSetupComplete,
+  isFocusVaultLinked,
+  resolveFocusFolderHandle,
+  setFocusFolderHandle,
+  focusVaultFolderName,
   focusFileName,
   buildFocusMarkdown,
   buildScrollList,
@@ -110,12 +115,12 @@ import {
   getBusActivityLog,
   pushBusActivity,
   buildScrollNodesFromConversations,
-} from "./intelligence.js?v=vault-gesture-1";
+} from "./intelligence.js?v=per-focus-vault-1";
 import {
   computeFocusHealth,
   healthHudChip,
   healerHealthSpellHint,
-} from "./health.js?v=vault-gesture-1";
+} from "./health.js?v=per-focus-vault-1";
 
 const SIDEBAR_COLLAPSE_KEY = "grimoire-sidebar-collapsed-v1";
 const UNIVERSE_VIEW_KEY = "grimoire-universe-view-v1";
@@ -128,20 +133,22 @@ for (const c of state.conversations || []) {
   if ("archetype" in c) delete c.archetype;
   ensureCertainty(c);
 }
-// If vault already linked at boot, mark focuses vault-backed (no stale path callouts)
+// Per-focus vault: restore vaultLinked flags from LS keys (never suppress via global vault)
 try {
-  if (typeof isIntelligenceSetupComplete === "function" && isIntelligenceSetupComplete()) {
-    for (const c of state.conversations || []) {
-      if (isCell2CoreFocus(c)) continue;
+  for (const c of state.conversations || []) {
+    if (isCell2CoreFocus(c) || !c?.id) continue;
+    if (typeof isFocusVaultLinked === "function" && isFocusVaultLinked(c.id)) {
       c.vaultLinked = true;
-      if (c.needsPathOnboarding) {
-        c.needsPathOnboarding = false;
-        c.pathOnboardingDismissed = true;
-      }
+      c.needsPathOnboarding = false;
+    } else if (c.vaultLinked && !c.pathOnboardingDismissed) {
+      // Legacy: had vaultLinked from old global gate — re-enable onboarding
+      // unless user already dismissed or per-focus handle exists
+      c.vaultLinked = false;
+      if (c.needsPathOnboarding == null) c.needsPathOnboarding = true;
     }
   }
 } catch {
-  /* isIntelligenceSetupComplete may run before full import in edge cases — ignore */
+  /* ignore */
 }
 // SCROLL eternal-intelligence Focus (idempotent seed after load)
 ensureScrollFocus(state);
@@ -930,29 +937,37 @@ function renderConvoList() {
   console.debug("[sidebar] render end", { rows: flat.length });
 }
 
-/** Vault is app-global; once linked, all focuses can write intelligence. */
-function isVaultLinked() {
+/** Per-focus vault linked? (never gate on global vault) */
+function isFocusPathLinked(c) {
+  if (!c?.id) return false;
+  if (c.vaultLinked === true) return true;
   try {
-    return Boolean(isIntelligenceSetupComplete());
+    return Boolean(isFocusVaultLinked(c.id));
   } catch {
     return false;
   }
 }
 
-/** Fresh focus still needs path onboarding (until vault linked or dismissed). */
+/**
+ * Fresh focus still needs path onboarding until THIS focus links its folder
+ * or user dismisses. Global vault does NOT suppress this.
+ */
 function focusNeedsPathOnboarding(c) {
   if (!c || !isVisibleFocus(c) || isCell2CoreFocus(c)) return false;
   if (c.pathOnboardingDismissed) return false;
-  if (c.vaultLinked || isVaultLinked()) return false;
-  // Only user-created focuses that were explicitly flagged at create time
-  return c.needsPathOnboarding === true;
+  if (isFocusPathLinked(c)) return false;
+  // Explicit flag from createConversation, or legacy focuses with no path yet
+  if (c.needsPathOnboarding === true) return true;
+  if (c.needsPathOnboarding === false) return false;
+  // Existing focuses without a per-focus handle → show callout
+  return !isFocusPathLinked(c);
 }
 
-/** Subtle glow while path onboarding is active (or just-created window). */
+/** Subtle glow while path onboarding is active. */
 function focusShowsFreshHighlight(c) {
   if (focusNeedsPathOnboarding(c)) return true;
   if (!c || !isVisibleFocus(c) || isCell2CoreFocus(c)) return false;
-  if (c.pathOnboardingDismissed || c.vaultLinked || isVaultLinked()) return false;
+  if (c.pathOnboardingDismissed || isFocusPathLinked(c)) return false;
   if (c.needsPathOnboarding !== true) return false;
   const age = Date.now() - Number(c.createdAt || 0);
   return age >= 0 && age < 60_000;
@@ -960,7 +975,7 @@ function focusShowsFreshHighlight(c) {
 
 function focusIsVaultBacked(c) {
   if (!c || isCell2CoreFocus(c)) return false;
-  return Boolean(c.vaultLinked) || isVaultLinked();
+  return isFocusPathLinked(c);
 }
 
 function dismissPathOnboarding(focusId) {
@@ -972,13 +987,13 @@ function dismissPathOnboarding(focusId) {
   renderConvoList();
 }
 
-function markAllFocusesVaultLinked() {
-  for (const c of state.conversations || []) {
-    if (isCell2CoreFocus(c)) continue;
-    c.vaultLinked = true;
-    c.needsPathOnboarding = false;
-    c.pathOnboardingDismissed = true;
-  }
+/** Mark a single focus as vault-backed after its own folder is chosen. */
+function markFocusVaultLinked(focusId) {
+  const c = state.conversations.find((x) => x.id === focusId);
+  if (!c) return;
+  c.vaultLinked = true;
+  c.needsPathOnboarding = false;
+  c.pathOnboardingDismissed = true;
 }
 
 function buildPathOnboardingCallout(c) {
@@ -987,11 +1002,12 @@ function buildPathOnboardingCallout(c) {
   box.dataset.focusId = c.id;
   box.setAttribute("role", "region");
   box.setAttribute("aria-label", `Vault path for ${c.name}`);
+  const folderHint = focusVaultFolderName(c.name || c.id);
 
   box.innerHTML = `
     <button type="button" class="focus-path-dismiss" title="Dismiss" aria-label="Dismiss path callout">×</button>
     <div class="focus-path-callout-body">
-      <p class="focus-path-text">Link vault folder to write intelligence</p>
+      <p class="focus-path-text">Link vault folder to write intelligence<br><span class="focus-path-folder-hint">Creates <code>${escapeHtml(folderHint)}/</code></span></p>
       <button type="button" class="btn-path-link" data-action="link-path">Create my path</button>
     </div>
   `;
@@ -1006,19 +1022,41 @@ function buildPathOnboardingCallout(c) {
     e.stopPropagation();
     state.activeId = c.id;
     persist();
-    await onChooseIntelFolder();
-    // If user aborted picker, keep callout
-    if (isVaultLinked()) {
-      markAllFocusesVaultLinked();
-      persist();
-      renderConvoList();
-      renderChat();
-    } else {
-      renderConvoList();
-    }
+    await onChooseFocusPath(c);
   });
 
   return box;
+}
+
+/**
+ * Per-focus "Create my path" — user gesture → picker → <Name>-FocusIntelligence/
+ */
+async function onChooseFocusPath(focus) {
+  if (!focus?.id) return;
+  if (!hasDirectoryPicker()) {
+    toast("Use Chrome or Edge for on-disk vault writes", "");
+    return;
+  }
+  try {
+    const handle = await chooseFocusIntelligenceFolder(focus);
+    setVaultFailState(false);
+    markFocusVaultLinked(focus.id);
+    toast(`Path ready: ${handle.name}/`, "success");
+    activityPing(`✦ Focus vault: ${handle.name}/`);
+    await refreshIntelFolderUi();
+    persist();
+    renderConvoList();
+    renderChat();
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      renderConvoList();
+      return;
+    }
+    console.warn(err);
+    setVaultFailState(true);
+    toast("Could not open folder", "");
+    renderConvoList();
+  }
 }
 
 function buildFocusRow(c) {
@@ -5608,8 +5646,18 @@ async function onChooseIntelFolder() {
       });
     }
     await updateScrollListIndex(state.conversations, state.spells);
-    // Clear path onboarding — vault is now available for all focuses
-    markAllFocusesVaultLinked();
+    // Global 📁 does not mark every focus vault-linked — each still has Create my path
+    // Optionally seed active focus as linked if it didn't have a path yet
+    const active = activeConvo();
+    if (active && !isCell2CoreFocus(active) && !isFocusPathLinked(active)) {
+      // Store global handle also under active focus for convenience
+      try {
+        await setFocusFolderHandle(active.id, handle, handle.name);
+        markFocusVaultLinked(active.id);
+      } catch {
+        /* ignore */
+      }
+    }
     persist();
     renderConvoList();
     renderChat();
@@ -5653,11 +5701,21 @@ async function bootstrapIntelligenceVault() {
         }
       }
       await updateScrollListIndex(state.conversations, state.spells);
-      markAllFocusesVaultLinked();
+      // Do NOT mark all focuses vault-linked — per-focus paths only
       persist();
       renderConvoList();
     }
-    // Not linked: leave path-onboarding callouts / 📁 affordance for user click
+    // Warm per-focus handles for any focus already flagged vaultLinked
+    for (const c of state.conversations || []) {
+      if (c?.id && (c.vaultLinked || isFocusVaultLinked(c.id))) {
+        try {
+          await resolveFocusFolderHandle(c.id);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    // Not linked: leave path-onboarding callouts / Create my path for user click
   } catch (err) {
     if (err?.name === "SecurityError" || /user gesture/i.test(String(err?.message || ""))) {
       console.warn("[vault] boot restore skipped picker (needs user gesture)");
@@ -6333,7 +6391,6 @@ function createConversation({ name, type, model } = {}) {
       /* ignore */
     }
 
-    const vaultAlready = isVaultLinked();
     const convo = {
       id,
       name: cleanName,
@@ -6349,10 +6406,10 @@ function createConversation({ name, type, model } = {}) {
       pinned: false,
       tags: [],
       folderId: null,
-      // Path onboarding: highlight + callout until vault linked or dismissed
-      needsPathOnboarding: !vaultAlready,
-      pathOnboardingDismissed: vaultAlready,
-      vaultLinked: vaultAlready,
+      // Always onboard: each focus must deliberately choose its own vault path
+      needsPathOnboarding: true,
+      pathOnboardingDismissed: false,
+      vaultLinked: false,
     };
 
     applyFocusClassification(convo, {

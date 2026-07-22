@@ -1664,6 +1664,18 @@ body.universe-view-active {
   margin: 0;
   color: rgba(220, 215, 255, 0.88);
 }
+.focus-path-folder-hint {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.65rem;
+  color: var(--text-dim, #8b93b8);
+  opacity: 0.9;
+}
+.focus-path-folder-hint code {
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 0.62rem;
+  color: #c4b5fd;
+}
 .btn-path-link {
   appearance: none;
   align-self: flex-start;

@@ -1,10 +1,11 @@
 /**
- * Local-first intelligence vault — GRIMOIRE-FocusIntelligence/
+ * Local-first intelligence vault — per-focus folders.
  *
- * - User picks parent once via showDirectoryPicker
- * - App creates GRIMOIRE-FocusIntelligence/ + README.md
- * - Handle stored in IndexedDB (FileSystemHandle) + localStorage flags
- * - One .md per sealed Focus; event log appends on spell/alignment
+ * - Each Focus links its own vault via "Create my path" (user gesture)
+ * - Folder name: <FocusName>-FocusIntelligence/ under a parent the user picks
+ * - Handles stored in IndexedDB as intelligence-dir-<focusId>
+ * - LS flags: grimoire-intel-folder-ready-<focusId>
+ * - Legacy global intelligence-dir / grimoire-intel-folder-ready kept as fallback only
  * - Download ONLY if File System Access API is unavailable
  */
 
@@ -36,7 +37,9 @@ let scrollListMemoryNodes = [];
 
 const IDB_NAME = "grimoire-intel-v1";
 const IDB_STORE = "handles";
+/** @deprecated global key — kept for backward compat only */
 const IDB_KEY = "intelligence-dir";
+/** @deprecated global LS — do not gate per-focus onboarding on this */
 const LS_SETUP = "grimoire-intel-folder-ready";
 const LS_NAME = "grimoire-intel-folder-name";
 const INTEL_DIR_NAME = "GRIMOIRE-FocusIntelligence";
@@ -63,8 +66,141 @@ export const CELL2_KINDS = Object.freeze({
   relationship: "relationship",
 });
 
-/** @type {FileSystemDirectoryHandle|null} */
+/** @type {FileSystemDirectoryHandle|null} legacy global handle */
 let dirHandle = null;
+/** @type {Map<string, FileSystemDirectoryHandle>} per-focus handles (session cache) */
+const focusDirHandles = new Map();
+
+export function focusIntelIdbKey(focusId) {
+  return `intelligence-dir-${String(focusId || "").trim()}`;
+}
+export function focusIntelLsReadyKey(focusId) {
+  return `grimoire-intel-folder-ready-${String(focusId || "").trim()}`;
+}
+export function focusIntelLsNameKey(focusId) {
+  return `grimoire-intel-folder-name-${String(focusId || "").trim()}`;
+}
+
+/** Sanitize focus name for a folder: "Test A" → "Test-A-FocusIntelligence" */
+export function focusVaultFolderName(focusName) {
+  const clean =
+    String(focusName || "Focus")
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 60) || "Focus";
+  if (/-FocusIntelligence$/i.test(clean)) return clean;
+  return `${clean}-FocusIntelligence`;
+}
+
+/** True if this specific focus has its own vault folder linked */
+export function isFocusVaultLinked(focusId) {
+  const id = String(focusId || "").trim();
+  if (!id) return false;
+  try {
+    if (localStorage.getItem(focusIntelLsReadyKey(id)) === "1") return true;
+  } catch {
+    /* ignore */
+  }
+  return focusDirHandles.has(id);
+}
+
+/**
+ * Resolve per-focus vault directory handle (IndexedDB + permission).
+ */
+export async function resolveFocusFolderHandle(focusId) {
+  const id = String(focusId || "").trim();
+  if (!id) return null;
+  if (focusDirHandles.has(id)) {
+    const h = focusDirHandles.get(id);
+    const ok = await ensurePermission(h);
+    if (ok) return h;
+    focusDirHandles.delete(id);
+  }
+  try {
+    const stored = await idbGet(focusIntelIdbKey(id));
+    if (!stored) return null;
+    const ok = await ensurePermission(stored);
+    if (!ok) return null;
+    focusDirHandles.set(id, stored);
+    try {
+      localStorage.setItem(focusIntelLsReadyKey(id), "1");
+    } catch {
+      /* ignore */
+    }
+    return stored;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist a per-focus vault handle (user-gesture path only).
+ */
+export async function setFocusFolderHandle(focusId, handle, folderName = "") {
+  const id = String(focusId || "").trim();
+  if (!id || !handle) return false;
+  focusDirHandles.set(id, handle);
+  try {
+    await idbSet(focusIntelIdbKey(id), handle);
+    localStorage.setItem(focusIntelLsReadyKey(id), "1");
+    if (folderName) {
+      localStorage.setItem(focusIntelLsNameKey(id), folderName);
+    } else if (handle.name) {
+      localStorage.setItem(focusIntelLsNameKey(id), handle.name);
+    }
+  } catch {
+    /* memory-only this session */
+  }
+  return true;
+}
+
+/**
+ * User gesture: pick parent → create <FocusName>-FocusIntelligence/ → store per-focus.
+ */
+export async function chooseFocusIntelligenceFolder(focus) {
+  if (!hasDirectoryPicker()) {
+    throw new Error("File System Access API not available in this browser");
+  }
+  if (!focus?.id) {
+    throw new Error("Focus id required for per-focus vault");
+  }
+  const folderName = focusVaultFolderName(focus.name || focus.id);
+  const parent = await window.showDirectoryPicker({
+    id: `grimoire-focus-parent-${focus.id}`,
+    mode: "readwrite",
+    startIn: "documents",
+  });
+
+  let handle;
+  // If user already selected the target vault folder itself, use it
+  if (
+    parent.name === folderName ||
+    /-FocusIntelligence$/i.test(parent.name) ||
+    parent.name === INTEL_DIR_NAME
+  ) {
+    handle = parent;
+  } else {
+    handle = await parent.getDirectoryHandle(folderName, { create: true });
+  }
+
+  await setFocusFolderHandle(focus.id, handle, handle.name || folderName);
+  await writeReadme(handle);
+  // Seed this focus's intelligence noodle at vault root + entity path
+  try {
+    await appendEntityIntelligence(focus, {
+      body: `Vault path linked for **${focus.name}** · folder \`${handle.name || folderName}\``,
+      source: "Cell2",
+      category: "identity",
+      certainty: "confirmed",
+      tags: ["vault-link", "path"],
+    });
+  } catch (err) {
+    console.warn("seed focus vault write", err);
+  }
+  return handle;
+}
 
 // ─── IndexedDB handle persistence (Chromium) ───
 
@@ -114,23 +250,22 @@ export function getCachedDirHandle() {
 }
 
 /**
- * Prompt: pick parent → create GRIMOIRE-FocusIntelligence/ → README.
+ * Legacy global picker (📁 header) — still creates one shared GRIMOIRE-FocusIntelligence/.
+ * Prefer chooseFocusIntelligenceFolder(focus) for per-focus paths.
  */
 export async function chooseIntelligenceFolder() {
   if (!hasDirectoryPicker()) {
     throw new Error("File System Access API not available in this browser");
   }
 
-  // Browsers require a user gesture; picker chooses parent location
   const parent = await window.showDirectoryPicker({
     id: "grimoire-intelligence-parent",
     mode: "readwrite",
     startIn: "documents",
   });
 
-  // If user already selected the vault folder itself, use it
   let handle;
-  if (parent.name === INTEL_DIR_NAME) {
+  if (parent.name === INTEL_DIR_NAME || /-FocusIntelligence$/i.test(parent.name)) {
     handle = parent;
   } else {
     handle = await parent.getDirectoryHandle(INTEL_DIR_NAME, { create: true });
@@ -149,32 +284,50 @@ export async function chooseIntelligenceFolder() {
 }
 
 /**
- * Restore vault handle from IndexedDB (no picker).
- * Never calls showDirectoryPicker — that requires a user gesture.
- * Pass forcePrompt: true only from an explicit click handler (📁 / Create my path).
+ * Restore vault handle(s). Never opens showDirectoryPicker.
+ * @param {{ forcePrompt?: boolean, focusId?: string }} [opts]
+ *   focusId — prefer per-focus handle; forcePrompt only from explicit click
  */
-export async function ensureIntelligenceFolder({ forcePrompt = false } = {}) {
+export async function ensureIntelligenceFolder({
+  forcePrompt = false,
+  focusId = null,
+} = {}) {
   if (!hasDirectoryPicker()) return null;
 
-  const restored = await restoreIntelligenceFolder();
-  if (restored) {
-    if (!forcePrompt) {
+  // Per-focus path first
+  if (focusId) {
+    const per = await resolveFocusFolderHandle(focusId);
+    if (per && !forcePrompt) {
       try {
-        await writeReadme(restored);
+        await writeReadme(per);
       } catch {
         /* ignore */
       }
-      return restored;
+      return per;
     }
-    // forcePrompt with valid restore: still ok to re-pick if caller wants change
+    if (forcePrompt) {
+      // Caller should use chooseFocusIntelligenceFolder(focus) with full focus object
+      // Fall through only if they forced without focus object
+    } else if (per) {
+      return per;
+    }
   }
 
-  // Boot / silent path: never open the OS picker (SecurityError without user gesture)
+  const restored = await restoreIntelligenceFolder();
+  if (restored && !forcePrompt) {
+    try {
+      await writeReadme(restored);
+    } catch {
+      /* ignore */
+    }
+    return restored;
+  }
+
+  // Boot / silent: never open OS picker
   if (!forcePrompt) {
-    return restored || null;
+    return restored || (focusId ? await resolveFocusFolderHandle(focusId) : null);
   }
 
-  // Explicit user gesture only
   try {
     return await chooseIntelligenceFolder();
   } catch (err) {
@@ -184,8 +337,10 @@ export async function ensureIntelligenceFolder({ forcePrompt = false } = {}) {
       }
       return null;
     }
-    // SecurityError if called without gesture — treat as not linked
-    if (err?.name === "SecurityError" || /user gesture/i.test(String(err?.message || err))) {
+    if (
+      err?.name === "SecurityError" ||
+      /user gesture/i.test(String(err?.message || err))
+    ) {
       console.warn("Directory picker blocked (needs user gesture)", err);
       return null;
     }
@@ -193,8 +348,20 @@ export async function ensureIntelligenceFolder({ forcePrompt = false } = {}) {
   }
 }
 
+/** Legacy: any global vault OR at least one per-focus vault */
 export function isIntelligenceSetupComplete() {
-  return localStorage.getItem(LS_SETUP) === "1" || Boolean(dirHandle);
+  if (localStorage.getItem(LS_SETUP) === "1" || Boolean(dirHandle)) return true;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("grimoire-intel-folder-ready-") && localStorage.getItem(k) === "1") {
+        return true;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return focusDirHandles.size > 0;
 }
 
 export function wasIntelligenceSetupSkipped() {
@@ -522,9 +689,18 @@ export function seedCell2DoctrineEntries() {
   ];
 }
 
-async function getVaultRoot() {
+/**
+ * Resolve vault root for writes.
+ * Prefer per-focus handle when focusId provided; fall back to legacy global.
+ */
+async function getVaultRoot(focusId = null) {
   if (!hasDirectoryPicker()) return null;
-  return dirHandle || (await restoreIntelligenceFolder());
+  if (focusId) {
+    const per = await resolveFocusFolderHandle(focusId);
+    if (per) return per;
+  }
+  if (dirHandle) return dirHandle;
+  return restoreIntelligenceFolder();
 }
 
 async function getEntityDirectory(root, entityId, { create = true } = {}) {
@@ -560,6 +736,10 @@ export async function appendEntityIntelligence(focusOrId, opts = {}) {
   const entityId = focus
     ? entityIdFromFocus(focus)
     : sanitizeEntityId(focusOrId || opts.entityId || "unknown");
+  const focusId =
+    opts.focusId ||
+    focus?.id ||
+    (typeof focusOrId === "string" ? focusOrId : null);
 
   const body = String(opts.body ?? opts.content ?? "").trim();
   if (!body) return { ok: false, method: "empty", entityId };
@@ -603,7 +783,8 @@ export async function appendEntityIntelligence(focusOrId, opts = {}) {
     body,
   });
   const relPath = entityIntelPath(entityId);
-  const root = await getVaultRoot();
+  // Prefer this focus's own vault folder
+  const root = await getVaultRoot(focusId);
 
   if (root) {
     try {
